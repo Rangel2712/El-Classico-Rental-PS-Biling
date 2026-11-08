@@ -331,3 +331,4 @@ input[type=range]{flex:1;accent-color:var(--gold);height:6px}
 
 .login-note{margin:-6px 0 18px;padding:10px 12px;border-radius:12px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:#bfdbfe;font-size:12px;line-height:1.5;text-align:left}
 [data-mode="light"] .login-note{color:#1e3a8a}
+.receipt .b{font-weight:700}

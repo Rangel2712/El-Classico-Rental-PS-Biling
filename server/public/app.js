@@ -118,6 +118,7 @@
   const chime = { success: () => { beep(660, .12); setTimeout(() => beep(990, .18), 120); }, warning: () => { beep(880, .15, 'square', .08); setTimeout(() => beep(880, .15, 'square', .08), 220); }, danger: () => { [0, 250, 500].forEach((d) => setTimeout(() => beep(520, .2, 'sawtooth', .1), d)); }, info: () => beep(740, .1) };
   function renderSoundBtn() { $('#soundBtn').innerHTML = ic(S.sound ? 'sound' : 'soundOff'); }
   $('#themeBtn').innerHTML = ic('palette');
+  $('#printBtn').innerHTML = ic('print'); $('#printBtn').onclick = () => openPrinter();
   $('#soundBtn').onclick = () => { S.sound = !S.sound; localStorage.setItem('ec_sound', S.sound ? '1' : '0'); renderSoundBtn(); beep(800, .1); };
   renderSoundBtn();
 
@@ -667,29 +668,220 @@
       if (paid < total && $('#meth', m).value === 'Tunai') return toast('Uang diterima kurang dari total', 'warning');
       try {
         const trx = await act('/api/session/checkout', { unitId: id, discount: Number($('#disc', m).value) || 0, paid, method: $('#meth', m).value });
-        closeModal(); showReceipt(trx); loadToday(true);
+        closeModal(); showReceipt(trx, true); loadToday(true);
       } catch (e) {}
     };
   }
 
   // ---- Struk ----
-  function receiptHTML(x) {
-    const st = S.snap.settings;
-    return '<div class="receipt"><h4>' + esc(st.name) + '</h4><div class="c">' + esc(st.address || '') + (st.phone ? '<br>' + esc(st.phone) : '') + '</div><div class="ln"></div>' +
-      '<div class="rw"><span>' + esc(x.id) + '</span></div><div class="rw"><span>' + new Date(x.endedAt).toLocaleString('id-ID') + '</span></div>' +
-      (x.kind === 'rental' ? '<div class="rw"><span>Unit</span><span>' + esc(x.unitName) + ' (' + esc(x.typeName) + ')</span></div><div class="rw"><span>Main</span><span>' + tm(x.startedAt) + '–' + tm(x.endedAt) + '</span></div><div class="rw"><span>Durasi</span><span>' + hms(x.playedMs) + '</span></div>' : '') +
-      (x.customer ? '<div class="rw"><span>Pelanggan</span><span>' + esc(x.customer) + '</span></div>' : '') + (x.cashierName ? '<div class="rw"><span>Kasir</span><span>' + esc(x.cashierName) + '</span></div>' : '') + '<div class="ln"></div>' +
-      (x.kind === 'rental' ? (x.mode === 'timer' ? x.charges.map((c) => '<div class="rw"><span>' + esc(c.label) + '</span><span>' + rp(c.price) + '</span></div>').join('') : '<div class="rw"><span>Main bebas</span><span>' + rp(x.rentalCost) + '</span></div>') : '') +
-      x.orders.map((o) => '<div class="rw"><span>' + o.qty + 'x ' + esc(o.name) + '</span><span>' + rp(o.qty * o.price) + '</span></div>').join('') +
-      '<div class="ln"></div>' + (x.discount ? '<div class="rw"><span>Diskon</span><span>-' + rp(x.discount) + '</span></div>' : '') +
-      '<div class="rw big"><span>TOTAL</span><span>' + rp(x.total) + '</span></div><div class="rw"><span>' + esc(x.method) + '</span><span>' + rp(x.paid) + '</span></div><div class="rw"><span>Kembali</span><span>' + rp(x.change) + '</span></div>' +
-      '<div class="ln"></div><div class="c">' + esc(st.receiptFooter || '') + '</div></div>';
+  // ================= Cetak struk (printer sistem / Bluetooth ESC/POS / dialog) =================
+  // Struk disusun sebagai "baris" lalu dirender ke HTML (printer Windows/Mac) atau ESC/POS (printer thermal Bluetooth/serial)
+  function receiptLines(x) {
+    const st = S.snap.settings; const L = [];
+    L.push({ t: 'center', big: true, bold: true, s: st.name });
+    if (st.address) L.push({ t: 'center', s: st.address });
+    if (st.phone) L.push({ t: 'center', s: st.phone });
+    L.push({ t: 'line' });
+    L.push({ t: 'text', s: x.id }); L.push({ t: 'text', s: new Date(x.endedAt).toLocaleString('id-ID') });
+    if (x.kind === 'rental') {
+      L.push({ t: 'lr', l: 'Unit', r: x.unitName + ' (' + x.typeName + ')' });
+      L.push({ t: 'lr', l: 'Main', r: tm(x.startedAt) + '-' + tm(x.endedAt) });
+      L.push({ t: 'lr', l: 'Durasi', r: hms(x.playedMs) });
+    }
+    if (x.customer) L.push({ t: 'lr', l: 'Pelanggan', r: x.customer });
+    if (x.cashierName) L.push({ t: 'lr', l: 'Kasir', r: x.cashierName });
+    L.push({ t: 'line' });
+    if (x.kind === 'rental') {
+      if (x.mode === 'timer') x.charges.forEach((c) => L.push({ t: 'lr', l: c.label, r: rp(c.price) }));
+      else L.push({ t: 'lr', l: 'Main bebas', r: rp(x.rentalCost) });
+    }
+    x.orders.forEach((o) => L.push({ t: 'lr', l: o.qty + 'x ' + o.name, r: rp(o.qty * o.price) }));
+    L.push({ t: 'line' });
+    if (x.discount) L.push({ t: 'lr', l: 'Diskon', r: '-' + rp(x.discount) });
+    L.push({ t: 'lr', l: 'TOTAL', r: rp(x.total), bold: true, big: true });
+    L.push({ t: 'lr', l: x.method, r: rp(x.paid) });
+    L.push({ t: 'lr', l: 'Kembali', r: rp(x.change) });
+    L.push({ t: 'line' });
+    if (st.receiptFooter) L.push({ t: 'center', s: st.receiptFooter });
+    return L;
   }
-  function showReceipt(x) {
-    const m = modal('Transaksi Berhasil ✅', '<div style="background:#e5e7eb;padding:16px;border-radius:14px">' + receiptHTML(x) + '</div>', '<button class="btn" data-x>Tutup</button><button class="btn gold" id="pr">' + ic('print', 16) + 'Cetak Struk</button>');
+  function shiftLines(r) {
+    const st = S.snap.settings; const L = [];
+    const range = new Date(r.from).toLocaleDateString('id-ID') + (S.rep.from !== S.rep.to ? ' - ' + new Date(r.to).toLocaleDateString('id-ID') : '');
+    L.push({ t: 'center', big: true, bold: true, s: st.name });
+    L.push({ t: 'center', bold: true, s: r.limited ? 'REKAP SHIFT KASIR' : 'REKAP PENDAPATAN' });
+    L.push({ t: 'line' });
+    L.push({ t: 'lr', l: 'Periode', r: range });
+    if (r.limited) L.push({ t: 'lr', l: 'Kasir', r: S.me.name });
+    L.push({ t: 'lr', l: 'Dicetak', r: new Date().toLocaleString('id-ID') });
+    L.push({ t: 'line' });
+    L.push({ t: 'lr', l: 'Transaksi', r: String(r.count) });
+    L.push({ t: 'lr', l: 'Sewa PS', r: rp(r.rental) });
+    L.push({ t: 'lr', l: 'F&B', r: rp(r.fnb) });
+    L.push({ t: 'lr', l: 'Diskon', r: '-' + rp(r.discount) });
+    L.push({ t: 'line' });
+    Object.keys(r.byMethod || {}).forEach((k) => L.push({ t: 'lr', l: k, r: rp(r.byMethod[k]) }));
+    L.push({ t: 'line' });
+    L.push({ t: 'lr', l: 'TOTAL', r: rp(r.total), bold: true, big: true });
+    if (!r.limited && r.byCashier.length) { L.push({ t: 'line' }); r.byCashier.forEach((x) => L.push({ t: 'lr', l: x.name, r: rp(x.total) })); }
+    L.push({ t: 'line' }); L.push({ t: 'center', s: 'Tanda tangan' }); L.push({ t: 'feed', n: 3 }); L.push({ t: 'center', s: '( ' + S.me.name + ' )' });
+    return L;
+  }
+  function htmlFromLines(L) {
+    return '<div class="receipt">' + L.map((x) => {
+      if (x.t === 'line') return '<div class="ln"></div>';
+      if (x.t === 'feed') return '<br>'.repeat(x.n || 1);
+      const cls = (x.big ? ' big' : '') + (x.bold ? ' b' : '');
+      if (x.t === 'center') return x.big ? '<h4>' + esc(x.s) + '</h4>' : '<div class="c' + cls + '">' + esc(x.s) + '</div>';
+      if (x.t === 'lr') return '<div class="rw' + cls + '"><span>' + esc(x.l) + '</span><span>' + esc(x.r) + '</span></div>';
+      return '<div class="rw' + cls + '"><span>' + esc(x.s) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  // ---- ESC/POS untuk printer thermal Bluetooth / USB-serial ----
+  function asciiOnly(s) {
+    return String(s == null ? '' : s).replace(/[–—]/g, '-').replace(/[·•]/g, '-').replace(/×/g, 'x').replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+      .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7E]/g, '').trim();
+  }
+  function escposFromLines(L, width) {
+    const W = width === 80 ? 48 : 32;
+    const out = [];
+    const push = (...b) => b.forEach((x) => out.push(x));
+    const text = (s) => { for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i) & 0xff); };
+    const wrap = (s, w) => { const r = []; s = asciiOnly(s); while (s.length > w) { let k = s.lastIndexOf(' ', w); if (k < w * 0.5) k = w; r.push(s.slice(0, k)); s = s.slice(k).trim(); } r.push(s); return r; };
+    push(0x1b, 0x40); // init
+    L.forEach((x) => {
+      push(0x1b, 0x45, x.bold ? 1 : 0);              // tebal
+      push(0x1d, 0x21, x.big ? 0x11 : 0x00);          // ukuran ganda
+      const w = x.big ? Math.floor(W / 2) : W;
+      if (x.t === 'line') { push(0x1b, 0x61, 0); text('-'.repeat(W)); push(0x0a); return; }
+      if (x.t === 'feed') { for (let i = 0; i < (x.n || 1); i++) push(0x0a); return; }
+      if (x.t === 'center') { push(0x1b, 0x61, 1); wrap(x.s, w).forEach((ln) => { text(ln); push(0x0a); }); push(0x1b, 0x61, 0); return; }
+      if (x.t === 'lr') {
+        push(0x1b, 0x61, 0);
+        const r = asciiOnly(x.r); let l = asciiOnly(x.l);
+        if (l.length + r.length + 1 > w) { wrap(l, w).forEach((ln) => { text(ln); push(0x0a); }); text(' '.repeat(Math.max(0, w - r.length)) + r); push(0x0a); }
+        else { text(l + ' '.repeat(w - l.length - r.length) + r); push(0x0a); }
+        return;
+      }
+      push(0x1b, 0x61, 0); wrap(x.s, w).forEach((ln) => { text(ln); push(0x0a); });
+    });
+    push(0x1b, 0x45, 0, 0x1d, 0x21, 0x00);
+    push(0x0a, 0x0a, 0x0a, 0x0a);
+    push(0x1d, 0x56, 0x42, 0x00); // potong kertas (diabaikan printer tanpa pemotong)
+    return new Uint8Array(out);
+  }
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s); };
+
+  // ---- Pengaturan printer (per perangkat) ----
+  const PR_DEFAULT = { mode: 'dialog', device: '', port: '', width: 58, auto: false, copies: 1 };
+  function prCfg() { try { return Object.assign({}, PR_DEFAULT, JSON.parse(localStorage.getItem('ec_printer') || '{}')); } catch (e) { return Object.assign({}, PR_DEFAULT); } }
+  function prSave(c) { localStorage.setItem('ec_printer', JSON.stringify(c)); }
+  const DESK = window.ecDesktop && window.ecDesktop.getPrinters ? window.ecDesktop : null;
+  let wsPort = null; // Web Serial (Chrome) port yang dipilih
+
+  function pageCss(width) {
+    return '<style>@page{margin:0}html,body{margin:0;padding:0;background:#fff}body{width:' + (width === 80 ? '72mm' : '48mm') + ';padding:2mm ' + (width === 80 ? '4mm' : '2mm') + ';font-family:"Courier New",Consolas,monospace;font-size:' + (width === 80 ? '12px' : '11px') + ';color:#000}' +
+      '.receipt h4{text-align:center;margin:0 0 2px;font-size:1.35em}.c{text-align:center}.ln{border-top:1px dashed #000;margin:5px 0}.rw{display:flex;justify-content:space-between;gap:6px}.rw span:last-child{text-align:right;white-space:nowrap}.big{font-size:1.25em;font-weight:700}.b{font-weight:700}</style>';
+  }
+  async function doPrint(L, opts) {
+    const c = prCfg(); opts = opts || {};
+    const copies = Math.max(1, Math.min(5, Number(c.copies) || 1));
+    try {
+      if (c.mode === 'system' && DESK) {
+        const html = '<!DOCTYPE html><html><head><meta charset="utf-8">' + pageCss(c.width) + '</head><body>' + htmlFromLines(L) + '</body></html>';
+        const r = await DESK.printHtml({ html, deviceName: c.device, copies });
+        if (!r.ok) throw new Error(r.error || 'Gagal mencetak');
+        if (!opts.quiet) toast('Struk dikirim ke ' + (c.device || 'printer bawaan'), 'success');
+        return;
+      }
+      if (c.mode === 'escpos' && DESK) {
+        if (!c.port) throw new Error('Pilih port printer Bluetooth dulu (ikon printer di kanan atas)');
+        const data = escposFromLines(L, c.width);
+        for (let i = 0; i < copies; i++) { const r = await DESK.printRaw({ port: c.port, data: b64(data) }); if (!r.ok) throw new Error(r.error || 'Gagal mengirim ke printer'); }
+        if (!opts.quiet) toast('Struk dicetak lewat ' + c.port, 'success');
+        return;
+      }
+      if (c.mode === 'webserial' && 'serial' in navigator) {
+        if (!wsPort) { const ports = await navigator.serial.getPorts(); wsPort = ports[0] || null; }
+        if (!wsPort) throw new Error('Pilih port printer dulu (ikon printer di kanan atas)');
+        await wsPort.open({ baudRate: Number(c.baud) || 9600 }).catch((e) => { if (!/already open/i.test(e.message)) throw e; });
+        const w = wsPort.writable.getWriter();
+        for (let i = 0; i < copies; i++) await w.write(escposFromLines(L, c.width));
+        w.releaseLock(); await wsPort.close().catch(() => {});
+        if (!opts.quiet) toast('Struk dicetak', 'success');
+        return;
+      }
+      // Dialog cetak bawaan
+      $('#printArea').innerHTML = htmlFromLines(L); window.print();
+    } catch (e) { toast('Cetak gagal: ' + e.message, 'danger'); }
+  }
+  async function openPrinter() {
+    const c = prCfg();
+    const modes = [['dialog', 'Dialog cetak (pilih printer setiap mencetak)']];
+    if (DESK) { modes.push(['system', 'Printer terpasang di komputer ini (langsung cetak)']); modes.push(['escpos', 'Printer thermal Bluetooth / USB-serial (ESC/POS)']); }
+    else if ('serial' in navigator) modes.push(['webserial', 'Printer thermal Bluetooth / USB-serial (lewat Chrome)']);
+    const m = modal(ic('print') + ' Printer Struk',
+      '<p class="muted" style="margin-top:0">Pengaturan ini tersimpan di <b>perangkat ini</b> saja, karena setiap komputer kasir bisa memakai printer yang berbeda.</p>' +
+      '<div class="field"><label class="f">Cara mencetak</label><select id="pm">' + modes.map(([k, l]) => '<option value="' + k + '" ' + (c.mode === k ? 'selected' : '') + '>' + l + '</option>').join('') + '</select></div>' +
+      '<div id="pbody"></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label class="f">Lebar kertas</label><select id="pw"><option value="58" ' + (c.width != 80 ? 'selected' : '') + '>58 mm (kecil)</option><option value="80" ' + (c.width == 80 ? 'selected' : '') + '>80 mm (besar)</option></select></div>' +
+      '<div class="field" style="flex:1"><label class="f">Jumlah salinan</label><input type="number" id="pc" min="1" max="5" value="' + (c.copies || 1) + '"></div></div>' +
+      '<label class="row" style="gap:10px;margin-bottom:6px"><span class="switch"><input type="checkbox" id="pa" ' + (c.auto ? 'checked' : '') + '><span></span></span>Cetak struk otomatis setelah pembayaran</label>' +
+      (!DESK ? '<div class="notice" style="margin-top:12px">Untuk memilih printer langsung (tanpa dialog) dan mencetak ke printer Bluetooth, gunakan aplikasi desktop <b>El Classico Billing</b> (.exe/.dmg)' + ('serial' in navigator ? ', atau pilih mode "lewat Chrome" di atas' : '') + '.</div>' : ''),
+      '<button class="btn" id="ptest">' + ic('print', 15) + 'Cetak Tes</button><span style="flex:1"></span><button class="btn" data-x>Tutup</button><button class="btn gold" id="psave">' + ic('check', 15) + 'Simpan</button>', 'wide');
     $('[data-x]', m).onclick = closeModal;
-    $('#pr', m).onclick = () => { $('#printArea').innerHTML = receiptHTML(x); window.print(); };
+    let sel = Object.assign({}, c);
+    async function body() {
+      const b = $('#pbody', m); sel.mode = $('#pm', m).value;
+      if (sel.mode === 'system') {
+        b.innerHTML = '<div class="field"><label class="f">Printer</label><div class="row"><select id="pd"><option>Memuat daftar printer…</option></select><button class="btn icon" id="pr" title="Muat ulang">' + ic('reload', 16) + '</button></div></div>';
+        const load = async () => {
+          const list = await DESK.getPrinters().catch(() => []);
+          $('#pd', m).innerHTML = '<option value="">Printer bawaan Windows/Mac</option>' + list.map((p) => '<option value="' + esc(p.name) + '" ' + (p.name === sel.device ? 'selected' : '') + '>' + esc(p.displayName || p.name) + (p.isDefault ? ' (bawaan)' : '') + '</option>').join('');
+          if (!list.length) toast('Tidak ada printer terpasang di komputer ini', 'warning');
+        };
+        $('#pr', m).onclick = load; await load();
+        b.insertAdjacentHTML('beforeend', '<div class="dim" style="font-size:12px;margin:-6px 0 14px">Printer Bluetooth yang sudah dipasang <b>driver</b>-nya (mis. POS-58) juga muncul di sini. Jika tidak muncul, pakai mode <b>Bluetooth / USB-serial (ESC/POS)</b>.</div>');
+      } else if (sel.mode === 'escpos') {
+        b.innerHTML = '<div class="field"><label class="f">Port printer (Bluetooth / USB-serial)</label><div class="row"><select id="pp"><option>Mencari port…</option></select><button class="btn icon" id="pr" title="Cari ulang">' + ic('reload', 16) + '</button></div></div>' +
+          '<div class="dim" style="font-size:12px;margin:-6px 0 14px;line-height:1.6">Windows: pasangkan (pair) printer di <b>Control Panel › Devices and Printers › Add a device</b>. Printer Bluetooth muncul sebagai <b>COM</b> (mis. "Standard Serial over Bluetooth link (COM5)"). Jika ada dua COM untuk printer yang sama, pilih yang <b>Outgoing</b>, atau coba satu per satu dengan <b>Cetak Tes</b>.</div>';
+        const load = async () => {
+          const list = await DESK.getSerialPorts().catch(() => []);
+          $('#pp', m).innerHTML = (list.length ? '' : '<option value="">Tidak ada port ditemukan</option>') + list.map((p) => '<option value="' + esc(p.port) + '" ' + (p.port === sel.port ? 'selected' : '') + '>' + esc(p.label) + '</option>').join('');
+        };
+        $('#pr', m).onclick = load; await load();
+      } else if (sel.mode === 'webserial') {
+        const ports = await navigator.serial.getPorts(); if (ports[0]) wsPort = ports[0];
+        b.innerHTML = '<div class="field"><label class="f">Port printer</label><div class="row"><span class="muted">' + (wsPort ? '✅ Port sudah dipilih' : 'Belum ada port dipilih') + '</span><button class="btn" id="pick">Pilih port printer…</button></div></div>' +
+          '<div class="row"><div class="field" style="flex:1"><label class="f">Baud rate (umumnya 9600)</label><input type="number" id="pb" value="' + (sel.baud || 9600) + '"></div></div>';
+        $('#pick', m).onclick = async () => { try { wsPort = await navigator.serial.requestPort(); toast('Port dipilih', 'success'); body(); } catch (e) {} };
+      } else b.innerHTML = '<div class="dim" style="font-size:12px;margin:-6px 0 14px">Setiap mencetak akan muncul jendela cetak untuk memilih printer.</div>';
+    }
+    $('#pm', m).onchange = body; await body();
+    const collect = () => {
+      sel.width = Number($('#pw', m).value); sel.copies = Number($('#pc', m).value) || 1; sel.auto = $('#pa', m).checked;
+      if ($('#pd', m)) sel.device = $('#pd', m).value; if ($('#pp', m)) sel.port = $('#pp', m).value; if ($('#pb', m)) sel.baud = Number($('#pb', m).value) || 9600;
+      return sel;
+    };
+    $('#psave', m).onclick = () => { prSave(collect()); toast('Pengaturan printer disimpan', 'success'); closeModal(); };
+    $('#ptest', m).onclick = async () => {
+      const prev = prCfg(); prSave(collect());
+      await doPrint([{ t: 'center', big: true, bold: true, s: S.snap.settings.name }, { t: 'center', s: 'TES PRINTER' }, { t: 'line' },
+        { t: 'lr', l: 'Perangkat', r: sel.mode === 'escpos' ? sel.port : (sel.device || 'bawaan') }, { t: 'lr', l: 'Kertas', r: sel.width + ' mm' }, { t: 'lr', l: 'Waktu', r: new Date().toLocaleString('id-ID') },
+        { t: 'line' }, { t: 'center', s: 'Jika tulisan ini rapi, printer siap dipakai.' }]);
+      prSave(prev);
+    };
   }
+
+  function showReceipt(x, fresh) {
+    const m = modal('Transaksi Berhasil ✅', '<div style="background:#e5e7eb;padding:16px;border-radius:14px">' + htmlFromLines(receiptLines(x)) + '</div>',
+      '<button class="btn ghost" id="prs">' + ic('gear', 15) + 'Printer</button><span style="flex:1"></span><button class="btn" data-x>Tutup</button><button class="btn gold" id="pr">' + ic('print', 16) + 'Cetak Struk</button>');
+    $('[data-x]', m).onclick = closeModal;
+    $('#prs', m).onclick = openPrinter;
+    $('#pr', m).onclick = () => doPrint(receiptLines(x));
+    if (fresh && prCfg().auto) doPrint(receiptLines(x), { quiet: false });
+  }
+
 
   // ---- Detail unit + kontrol TV ----
   function openUnit(id, tab) {
@@ -859,7 +1051,7 @@
     $('#pgo').onclick = async () => {
       try {
         if (S.posTarget) { await act('/api/session/orderAdd', { unitId: S.posTarget, items: S.cart }, 'Pesanan masuk tagihan ' + unitOf(S.posTarget).name); }
-        else { const trx = await act('/api/session/sale', { items: S.cart, method: $('#pmeth').value, paid: Number($('#ppaid').value) || total }); showReceipt(trx); loadToday(true); }
+        else { const trx = await act('/api/session/sale', { items: S.cart, method: $('#pmeth').value, paid: Number($('#ppaid').value) || total }); showReceipt(trx, true); loadToday(true); }
         S.cart = []; drawCart();
       } catch (e) {}
     };
@@ -914,19 +1106,7 @@
     $$('[data-p]').forEach((b) => (b.onclick = () => showReceipt(r.transactions.find((x) => x.id === b.dataset.p))));
     $$('[data-d]').forEach((b) => (b.onclick = async () => { if (await confirmBox('Hapus transaksi?', 'Transaksi <b>' + esc(b.dataset.d) + '</b> akan dihapus permanen dari laporan.', 'Hapus', 'red')) { await act('/api/transaction/delete', { id: b.dataset.d }, 'Transaksi dihapus'); loadReport(); loadToday(true); } }));
   }
-  function printShift(r) {
-    const st = S.snap.settings;
-    const range = new Date(r.from).toLocaleDateString('id-ID') + (S.rep.from !== S.rep.to ? ' – ' + new Date(r.to).toLocaleDateString('id-ID') : '');
-    $('#printArea').innerHTML = '<div class="receipt"><h4>' + esc(st.name) + '</h4><div class="c">' + (r.limited ? 'REKAP SHIFT KASIR' : 'REKAP PENDAPATAN') + '</div><div class="ln"></div>' +
-      '<div class="rw"><span>Periode</span><span>' + range + '</span></div>' + (r.limited ? '<div class="rw"><span>Kasir</span><span>' + esc(S.me.name) + '</span></div>' : '') +
-      '<div class="rw"><span>Dicetak</span><span>' + new Date().toLocaleString('id-ID') + '</span></div><div class="ln"></div>' +
-      '<div class="rw"><span>Transaksi</span><span>' + r.count + '</span></div><div class="rw"><span>Sewa PS</span><span>' + rp(r.rental) + '</span></div><div class="rw"><span>F&amp;B</span><span>' + rp(r.fnb) + '</span></div><div class="rw"><span>Diskon</span><span>-' + rp(r.discount) + '</span></div>' +
-      '<div class="ln"></div>' + Object.keys(r.byMethod || {}).map((k) => '<div class="rw"><span>' + esc(k) + '</span><span>' + rp(r.byMethod[k]) + '</span></div>').join('') +
-      '<div class="ln"></div><div class="rw big"><span>TOTAL</span><span>' + rp(r.total) + '</span></div>' +
-      (!r.limited && r.byCashier.length ? '<div class="ln"></div>' + r.byCashier.map((x) => '<div class="rw"><span>' + esc(x.name) + '</span><span>' + rp(x.total) + '</span></div>').join('') : '') +
-      '<div class="ln"></div><div class="c">Tanda tangan<br><br><br>( ' + esc(S.me.name) + ' )</div></div>';
-    window.print();
-  }
+  function printShift(r) { doPrint(shiftLines(r)); }
   function bindRep() {
     $$('#rr button').forEach((b) => (b.onclick = () => { setRange(b.dataset.r); S.report = null; renderReport(); loadReport(); }));
     $('#rf').onchange = (e) => { S.rep.from = e.target.value; S.rep.range = ''; loadReport(); };

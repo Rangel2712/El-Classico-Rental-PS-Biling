@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const dgram = require('dgram');
 const os = require('os');
+const { execFile } = require('child_process');
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
@@ -132,6 +133,75 @@ ipcMain.handle('ec:discover', () => new Promise((resolve) => {
   sock.on('error', () => { try { sock.close(); } catch (e) {} resolve(Object.values(found)); });
   sock.bind(41234, () => { try { sock.setBroadcast(true); } catch (e) {} });
   setTimeout(() => { try { sock.close(); } catch (e) {} resolve(Object.values(found)); }, 4000);
+}));
+
+// ---------- Printer ----------
+ipcMain.handle('ec:printers', async () => {
+  try {
+    const list = win.webContents.getPrintersAsync ? await win.webContents.getPrintersAsync() : win.webContents.getPrinters();
+    return list.map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault, status: p.status }));
+  } catch (e) { return []; }
+});
+
+function run(cmd, args) {
+  return new Promise((resolve) => execFile(cmd, args, { timeout: 8000, windowsHide: true }, (err, out) => resolve(err ? '' : String(out || ''))));
+}
+// Daftar port serial: printer Bluetooth (SPP) muncul sebagai COMx di Windows, /dev/cu.* di Mac
+ipcMain.handle('ec:serialPorts', async () => {
+  const ports = [];
+  if (process.platform === 'win32') {
+    const reg = await run('reg', ['query', 'HKLM\\HARDWARE\\DEVICEMAP\\SERIALCOMM']);
+    const names = {};
+    const wmi = await run('wmic', ['path', 'Win32_PnPEntity', 'where', "Name like '%(COM%'", 'get', 'Name']);
+    wmi.split(/\r?\n/).forEach((l) => { const m = l.match(/\((COM\d+)\)/); if (m) names[m[1]] = l.trim(); });
+    reg.split(/\r?\n/).forEach((l) => {
+      const m = l.match(/(COM\d+)\s*$/);
+      if (m) {
+        const dev = (l.trim().split(/\s+/)[0] || '');
+        const bt = /bth|bluetooth/i.test(dev + ' ' + (names[m[1]] || ''));
+        ports.push({ port: m[1], label: (bt ? '🔵 ' : '') + (names[m[1]] || m[1] + ' (' + dev + ')'), bluetooth: bt });
+      }
+    });
+    Object.keys(names).forEach((p) => { if (!ports.find((x) => x.port === p)) ports.push({ port: p, label: names[p], bluetooth: /bluetooth/i.test(names[p]) }); });
+  } else {
+    try {
+      fs.readdirSync('/dev').filter((n) => /^(cu\.|rfcomm|ttyUSB|ttyACM)/.test(n) && !/Bluetooth-Incoming-Port|debug-console/i.test(n))
+        .forEach((n) => ports.push({ port: n, label: n, bluetooth: /^cu\./.test(n) && !/usb/i.test(n) }));
+    } catch (e) {}
+  }
+  ports.sort((a, b) => (b.bluetooth - a.bluetooth) || a.port.localeCompare(b.port, undefined, { numeric: true }));
+  return ports;
+});
+
+// Cetak HTML ke printer terpasang tanpa dialog
+ipcMain.handle('ec:printHtml', (e, o) => new Promise((resolve) => {
+  const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  let done = false;
+  const finish = (r) => { if (done) return; done = true; resolve(r); setTimeout(() => { try { pw.destroy(); } catch (x) {} }, 500); };
+  pw.webContents.once('did-finish-load', () => {
+    pw.webContents.print({ silent: true, printBackground: true, deviceName: o.deviceName || '', copies: Math.max(1, Number(o.copies) || 1), margins: { marginType: 'none' } },
+      (ok, reason) => finish(ok ? { ok: true } : { ok: false, error: reason || 'Printer menolak pekerjaan cetak' }));
+  });
+  setTimeout(() => finish({ ok: false, error: 'Printer tidak merespons' }), 30000);
+  pw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(o.html));
+}));
+
+// Kirim data ESC/POS mentah ke port COM / Bluetooth
+ipcMain.handle('ec:printRaw', (e, o) => new Promise((resolve) => {
+  const port = String(o.port || '');
+  if (!/^(COM\d+|cu\.[\w.\-]+|rfcomm\d+|ttyUSB\d+|ttyACM\d+)$/.test(port)) return resolve({ ok: false, error: 'Port tidak valid' });
+  const target = process.platform === 'win32' ? '\\\\.\\' + port : '/dev/' + port;
+  const data = Buffer.from(o.data || '', 'base64');
+  let finished = false;
+  const end = (r) => { if (!finished) { finished = true; resolve(r); } };
+  setTimeout(() => end({ ok: false, error: 'Printer tidak merespons. Pastikan printer menyala, sudah di-pair, dan tidak sedang dipakai aplikasi lain.' }), 20000);
+  fs.open(target, 'w', (err, fd) => {
+    if (err) return end({ ok: false, error: 'Tidak bisa membuka ' + port + ': ' + (err.code === 'ENOENT' ? 'port tidak ada' : err.code === 'EBUSY' || err.code === 'EACCES' ? 'port sedang dipakai / ditolak' : err.message) });
+    fs.write(fd, data, 0, data.length, null, (err2) => {
+      fs.close(fd, () => {});
+      end(err2 ? { ok: false, error: err2.message } : { ok: true });
+    });
+  });
 }));
 
 app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });

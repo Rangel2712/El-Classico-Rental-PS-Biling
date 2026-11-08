@@ -14,7 +14,7 @@ const url = require('url');
 const { execFile } = require('child_process');
 const WS = require('./lib/ws');
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const DISCOVERY_PORT = 41234;
 
 // ---------- Default data ----------
