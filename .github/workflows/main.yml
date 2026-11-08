@@ -17,10 +17,9 @@ jobs:
         run: |
           if [ ! -d android-tv ]; then
             f=$(find . -maxdepth 4 -type d -name android-tv -not -path './.git/*' | head -1)
-            if [ -z "$f" ]; then echo "::error::Folder android-tv tidak ditemukan. Unggah isi ElClassico-Billing.zip ke repository."; ls -la; exit 1; fi
-            d=$(dirname "$f"); echo "Proyek ada di $d"; shopt -s dotglob; cp -r "$d"/* .
+            if [ -z "$f" ]; then echo "::error::Folder android-tv tidak ditemukan."; ls -la; exit 1; fi
+            d=$(dirname "$f"); shopt -s dotglob; cp -r "$d"/* .
           fi
-          ls -la
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
@@ -33,7 +32,7 @@ jobs:
         with: { name: ElClassico-TV-apk, path: ElClassico-TV.apk }
 
   windows:
-    name: Aplikasi Windows (.exe)
+    name: Aplikasi Windows 10/11 (.exe)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +53,8 @@ jobs:
           npx electron-builder --win --x64 --publish never
       - uses: actions/upload-artifact@v4
         with: { name: ElClassico-Windows-exe, path: desktop/dist/*.exe }
-    windows7:
+
+  windows7:
     name: Aplikasi Windows 7 (.exe, 32 & 64-bit)
     runs-on: windows-latest
     steps:
@@ -78,6 +78,7 @@ jobs:
           npx electron-builder --win --config electron-builder-win7.json --publish never
       - uses: actions/upload-artifact@v4
         with: { name: ElClassico-Windows7-exe, path: desktop/dist-win7/*.exe }
+
   mac:
     name: Aplikasi macOS (.dmg, Intel)
     runs-on: macos-latest
@@ -129,7 +130,7 @@ jobs:
   release:
     name: Rilis
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ apk, windows, mac, server ]
+    needs: [ apk, windows, windows7, mac, server ]
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
