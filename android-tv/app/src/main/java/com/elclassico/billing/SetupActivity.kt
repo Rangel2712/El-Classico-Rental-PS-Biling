@@ -132,7 +132,8 @@ class SetupActivity : Activity() {
         right.addView(button("🏠  Jadikan Launcher Utama (opsional)") {
             try { startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) } catch (_: Exception) { TvControl.openHome(this) }
         })
-        right.addView(button("🛠️  Buka Pengaturan Android TV") { TvControl.openSettings(this) })
+        right.addView(button("🛠️  Buka Pengaturan Android TV") { BillingService.pauseLock(15 * 60_000L); TvControl.openSettings(this) })
+        right.addView(button("💻  Cara aktifkan lewat laptop (ADB)") { showAdbHelp() })
         status = hint("")
         right.addView(status)
 
@@ -177,6 +178,7 @@ class SetupActivity : Activity() {
     }
 
     private fun openAccessibility() {
+        BillingService.pauseLock(15 * 60_000L)
         toast("Pilih \"El Classico Billing\" lalu aktifkan (On). Tekan BACK untuk kembali.")
         try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) {
             status.text = "Menu aksesibilitas tidak bisa dibuka otomatis.\nBuka manual: Pengaturan TV › Preferensi Perangkat › Aksesibilitas › El Classico Billing › Aktifkan.\n" +
@@ -185,6 +187,7 @@ class SetupActivity : Activity() {
     }
 
     private fun requestOverlay() {
+        BillingService.pauseLock(15 * 60_000L)
         if (Build.VERSION.SDK_INT < 23) { toast("Sudah diizinkan"); return }
         try {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
@@ -196,6 +199,7 @@ class SetupActivity : Activity() {
     }
 
     private fun requestAdmin() {
+        BillingService.pauseLock(15 * 60_000L)
         if (PowerControl.adminActive(this)) { toast("Izin admin perangkat sudah aktif"); return }
         try {
             startActivity(PowerControl.requestAdminIntent(this))
@@ -203,6 +207,17 @@ class SetupActivity : Activity() {
             status.text = "TV ini tidak punya menu Admin Perangkat.\nPakai tombol Aksesibilitas, atau aktifkan lewat komputer (ADB):\n" +
                     "adb shell dpm set-active-admin $packageName/.AdminReceiver"
         }
+    }
+
+    private fun showAdbHelp() {
+        val ip = TvControl.ip(this)
+        status.text = "AKTIFKAN LEWAT LAPTOP (sekali saja, untuk TV yang menolak izin):\n" +
+                "1. TV: Pengaturan > Preferensi Perangkat > Tentang > klik 'Build' 7x, lalu buka Opsi Pengembang > aktifkan USB/Network debugging\n" +
+                "2. Laptop (satu WiFi), di folder platform-tools jalankan:\n" +
+                "   adb connect $ip:5555   (setujui 'Allow debugging' di TV)\n" +
+                "   adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow\n" +
+                "   adb shell dpm set-active-admin $packageName/.AdminReceiver\n" +
+                "3. Buka ulang aplikasi El Classico. Timer & Matikan TV aktif."
     }
 
     private fun discover() {

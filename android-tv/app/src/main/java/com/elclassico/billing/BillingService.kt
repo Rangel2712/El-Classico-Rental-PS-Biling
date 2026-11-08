@@ -68,13 +68,18 @@ class BillingService : Service() {
     private var lastStatus: String = "none"
     private var discoveryThread: Thread? = null
     /** Jeda penegakan layar kunci (mis. saat kasir membuka menu Pengaturan). */
-    private var enforceAfter = 0L
+    @Volatile var enforceAfter = 0L
 
     companion object {
         const val CHANNEL = "billing"
         const val ACTION_RECONNECT = "com.elclassico.billing.RECONNECT"
         const val ACTION_WAKE = "com.elclassico.billing.WAKE"
         @Volatile var instance: BillingService? = null
+
+        /** Jangan tarik layar kunci selama teknisi berada di menu Pengaturan TV. */
+        fun pauseLock(ms: Long) {
+            instance?.enforceAfter = System.currentTimeMillis() + ms
+        }
         const val DISCOVERY_PORT = 41234
 
         fun start(c: Context, reconnect: Boolean = false) {
@@ -587,7 +592,7 @@ class BillingService : Service() {
                 if (lastMode == "play" || lastMode == "play-nohdmi") {
                     // Sesi berjalan: cukup sekali pindahkan ke HDMI
                     if (wakeStep == 1) TvControl.openHdmi(this@BillingService, Prefs.hdmiInput(this@BillingService))
-                } else if (!MainActivity.visible) {
+                } else if (!MainActivity.visible && System.currentTimeMillis() > enforceAfter) {
                     showLock()
                 }
             }
