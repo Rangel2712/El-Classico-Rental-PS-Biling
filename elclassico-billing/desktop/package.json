@@ -25,7 +25,7 @@
     "win": {
       "target": [ { "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] } ],
       "icon": "build/icon.png",
-      "artifactName": "ElClassico-Billing-${version}-${arch}-${target}.${ext}"
+            "artifactName": "ElClassico-Billing-${version}-setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
