@@ -72,7 +72,7 @@ object Bus {
         main.post { listeners.toList().forEach { it.onConnection(on) } }
     }
 
-    fun setMode(m: String) {
+        @JvmName("changeMode") fun setMode(m: String) {
         mode = m
         main.post { listeners.toList().forEach { it.onMode(m) } }
     }
