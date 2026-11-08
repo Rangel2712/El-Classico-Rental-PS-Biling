@@ -37,6 +37,10 @@ object Prefs {
             .apply()
     }
 
+    fun setHdmi(c: Context, id: String, label: String) {
+        sp(c).edit().putString("hdmi", id).putString("hdmiLabel", label).apply()
+    }
+
     fun setServer(c: Context, host: String, port: Int) {
         sp(c).edit().putString("host", host).putInt("port", port).apply()
     }

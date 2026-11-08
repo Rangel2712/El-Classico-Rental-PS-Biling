@@ -44,7 +44,13 @@
   function onMessage(m) {
     if (typeof m === 'string') { try { m = JSON.parse(m); } catch (e) { return; } }
     if (!m) return;
-    if (m.t === 'state') { st = m; recvAt = Date.now(); render(); }
+    if (m.t === 'state') {
+      const prevRem = st && st.session ? st.session.remainingMs : null;
+      st = m; recvAt = Date.now();
+      // tampilkan timer sebentar bila waktu ditambah/dikurangi
+      if (m.session && prevRem != null && m.session.remainingMs != null && Math.abs((prevRem - (Date.now() - recvAt)) - m.session.remainingMs) > 30000) shownAt = Date.now();
+      render();
+    }
     else if (m.t === 'cmd') onCmd(m);
   }
   function onCmd(m) {
@@ -99,13 +105,21 @@
     const showPlay = mode === 'web' && stt === 'playing';
     $('lock').classList.toggle('hidden', !showLock);
     $('play').classList.toggle('hidden', !showPlay);
+    if (st && st.config) {
+      const pill = $('pill');
+      pill.className = pill.className.replace(/\b(pos|size)-\w+/g, '').trim() + ' pos-' + (st.config.pillPosition || 'tr') + ' size-' + (st.config.pillSize || 'm');
+    }
     if (st) {
       $('bName').textContent = st.brand.name; $('bTag').textContent = st.brand.tagline || '';
       $('addr').textContent = [st.brand.address, st.brand.phone].filter(Boolean).join(' · ');
       $('uName').textContent = st.unit.name; $('uType').textContent = st.unit.typeName || '';
       $('pBrand').textContent = st.brand.name; $('pUnit').textContent = st.unit.name + ' · ' + (st.unit.typeName || '');
       $('pillU').textContent = st.unit.name;
-      if (st.unit.unknown) { $('setupHint').textContent = 'ID unit "' + unitId + '" belum terdaftar di server — tambahkan di Pengaturan › Unit TV'; $('setupHint').classList.remove('hidden'); }
+      const om = NATIVE && ElNative.getOverlayMode ? ElNative.getOverlayMode() : '';
+      if (mode === 'lock' && NATIVE && om === 'toast' && ElNative.isConfigured && ElNative.isConfigured()) {
+        $('setupHint').textContent = '⚠ Timer di atas game belum aktif · Teknisi: tekan OK 7× › Aktifkan Aksesibilitas El Classico';
+        $('setupHint').classList.remove('hidden');
+      } else if (st.unit.unknown) { $('setupHint').textContent = 'ID unit "' + unitId + '" belum terdaftar di server — tambahkan di Pengaturan › Unit TV'; $('setupHint').classList.remove('hidden'); }
       else $('setupHint').classList.add('hidden');
     }
     $('lock').className = 'lock s-' + stt + (showLock ? '' : ' hidden');
@@ -155,9 +169,10 @@
     if (s.mode === 'timer') {
       const secs = Math.ceil(v / 1000);
       // pill
-      if (mode === 'overlay' && st.config.showTimerPill !== false) {
+      if (mode === 'overlay' && st.config.showTimerPill !== false && pillVisible(secs, s)) {
         pill.classList.remove('hidden'); $('pillT').textContent = short(v);
         pill.classList.toggle('low', secs <= 300 && secs > wSec); pill.classList.toggle('crit', secs <= wSec);
+        pill.style.opacity = secs <= wSec ? 1 : secs <= 300 ? Math.max(0.85, pillOpacity()) : pillOpacity();
       } else pill.classList.add('hidden');
       // web play screen
       if (mode === 'web') {
@@ -167,20 +182,40 @@
         $('play').classList.toggle('warn', secs <= wSec);
       }
       // hitung mundur 1 menit
-      if (secs <= wSec && secs > 0) {
+      if (secs <= wSec && secs > 0 && st.config.bigCountdown !== false) {
         warn.classList.remove('hidden'); $('wNum').textContent = secs;
         $('ringF').style.strokeDashoffset = String(326.7 * (1 - secs / wSec));
         warn.classList.toggle('small', secs > 10);
         if (!beeped.w) { beeped.w = 1; sfx.warn(); }
         if (secs <= 10 && !beeped['t' + secs]) { beeped['t' + secs] = 1; sfx.tick(); }
-      } else { warn.classList.add('hidden'); if (secs > wSec) beeped = {}; }
+      } else {
+        warn.classList.add('hidden'); if (secs > wSec) beeped = {};
+        if (secs <= wSec && secs > 0) { // hanya timer pojok: tetap beri bunyi
+          if (!beeped.w) { beeped.w = 1; sfx.warn(); }
+          if (secs <= 10 && !beeped['t' + secs]) { beeped['t' + secs] = 1; sfx.tick(); }
+        }
+      }
       if (secs <= 0 && lastStatus === 'playing') render();
     } else {
       warn.classList.add('hidden');
-      if (mode === 'overlay' && st.config.showTimerPill !== false) { pill.classList.remove('hidden'); $('pillT').textContent = '▶ ' + short(v); pill.classList.remove('low', 'crit'); }
+      if (mode === 'overlay' && st.config.showTimerPill !== false && pillVisible(null, s)) { pill.classList.remove('hidden'); $('pillT').textContent = '▶ ' + short(v); pill.classList.remove('low', 'crit'); pill.style.opacity = pillOpacity(); }
+      else if (mode === 'overlay') pill.classList.add('hidden');
       if (mode === 'web') { $('pLbl').textContent = 'MAIN BEBAS · WAKTU BERJALAN'; $('pTime').textContent = hms(v); $('pBar').style.width = '100%'; }
     }
   }
+  // Timer tidak mengganggu: transparan & bisa muncul hanya sesekali
+  function pillOpacity() { const o = Number(st && st.config && st.config.pillOpacity); return o >= 0.2 && o <= 1 ? o : 0.55; }
+  function pillVisible(secs, s) {
+    const m = (st.config && st.config.pillMode) || 'always';
+    if (m === 'always') return true;
+    if (secs != null && secs <= 300) return true;                 // 5 menit terakhir selalu tampil
+    const el = Math.floor((s.elapsedMs + (s.status === 'playing' ? Date.now() - recvAt : 0)) / 1000);
+    if (el < 15) return true;                                     // 15 detik pertama setelah mulai
+    if (Date.now() - shownAt < 12000) return true;                // setelah ada perubahan (tambah waktu, dll)
+    if (m === 'peek') { const every = Math.max(1, Number(st.config.pillPeekEvery) || 10) * 60; return el % every < 12; }
+    return false;                                                 // last5
+  }
+  let shownAt = 0;
   setInterval(tick, 250);
   setInterval(() => { if (st && (status() === 'paused')) render(); }, 5000);
 

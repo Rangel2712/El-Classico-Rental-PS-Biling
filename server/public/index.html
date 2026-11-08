@@ -13,11 +13,13 @@
 <div id="login" class="login hidden">
   <div class="box">
     <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#f5c518" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h4M8 7v4"/><circle cx="15.5" cy="9.5" r=".8" fill="#f5c518"/><circle cx="17.5" cy="11.5" r=".8" fill="#f5c518"/><path d="M7.5 4h9A5.5 5.5 0 0 1 22 9.5v3.2a3.3 3.3 0 0 1-6 1.9L14.8 13H9.2L8 14.6a3.3 3.3 0 0 1-6-1.9V9.5A5.5 5.5 0 0 1 7.5 4z"/></svg></div>
-    <h1>El Classico</h1>
-    <p>Rental PS Billing · Masukkan PIN kasir</p>
+    <h1 id="loginBrand">El Classico</h1>
+    <p id="loginHint">Pilih nama Anda, lalu masukkan PIN</p>
+    <div class="users-pick" id="userPick"></div>
     <div class="pin-dots" id="pinDots"></div>
+    <div class="login-err" id="loginErr"></div>
     <div class="pad" id="pad"></div>
-    <p class="dim" style="margin-top:20px;font-size:12px">PIN awal: 1234 — ganti di Pengaturan</p>
+    <p class="dim" style="margin-top:18px;font-size:12px" id="loginFoot">Login pertama: <b>Admin Utama</b> · PIN <b>1234</b></p>
   </div>
 </div>
 
@@ -32,6 +34,9 @@
     <div class="nav" data-view="orders"><span class="ico" data-i="bell"></span><span>Pesanan</span><span class="badge hidden" id="ordBadge">0</span></div>
     <div class="nav" data-view="report"><span class="ico" data-i="chart"></span><span>Laporan</span></div>
     <div class="nav" data-view="settings"><span class="ico" data-i="gear"></span><span>Pengaturan</span></div>
+    <div class="nav" data-view="users"><span class="ico" data-i="users"></span><span>Pengguna</span></div>
+    <div class="nav" data-view="audit"><span class="ico" data-i="list"></span><span>Aktivitas</span></div>
+    <div class="me" id="meCard"></div>
     <div class="foot" id="sideFoot"></div>
   </aside>
   <main class="main">

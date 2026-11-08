@@ -54,7 +54,16 @@ class BillingService : Service() {
     private var wsGen = 0
     private var stopped = false
     private var overlay: WebView? = null
+    private var overlayWm: WindowManager? = null
+    private var overlayKind = ""      // "window" (izin overlay) | "accessibility"
     private var overlayReady = false
+    // Data untuk notifikasi cadangan bila overlay tidak tersedia
+    private var stStatus = "idle"
+    private var stTimer = false
+    private var stRemaining = 0L
+    private var stRecv = 0L
+    private var stUnitName = ""
+    private val toastShown = HashSet<Int>()
     private var lastMode: String? = null
     private var lastStatus: String = "none"
     private var discoveryThread: Thread? = null
@@ -65,6 +74,7 @@ class BillingService : Service() {
         const val CHANNEL = "billing"
         const val ACTION_RECONNECT = "com.elclassico.billing.RECONNECT"
         const val ACTION_WAKE = "com.elclassico.billing.WAKE"
+        @Volatile var instance: BillingService? = null
         const val DISCOVERY_PORT = 41234
 
         fun start(c: Context, reconnect: Boolean = false) {
@@ -79,6 +89,7 @@ class BillingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         startForeground(1, buildNotification("Menghubungkan ke server…"))
         val f = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
@@ -88,6 +99,7 @@ class BillingService : Service() {
         }
         registerReceiver(screenReceiver, f)
         main.postDelayed(statusLoop, 30_000)
+        main.postDelayed(toastTick, 1000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -101,6 +113,7 @@ class BillingService : Service() {
 
     override fun onDestroy() {
         stopped = true
+        instance = null
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) { }
         ws?.close(1000, "bye")
         removeOverlay()
@@ -210,7 +223,14 @@ class BillingService : Service() {
         .put("maxVolume", TvControl.maxVolume(this))
         .put("screenOn", TvControl.isScreenOn(this))
         .put("overlay", TvControl.canOverlay(this))
+        .put("overlayMode", if (overlay != null) overlayKind else "toast")
+        .put("accessibility", PowerAccessibility.instance != null)
         .put("hdmi", Prefs.hdmiLabel(this))
+        .put("hdmiId", Prefs.hdmiInput(this))
+        .put("inputs", org.json.JSONArray().apply {
+            TvControl.inputs(this@BillingService).forEach { put(JSONObject().put("id", it.id).put("label", it.label)) }
+        })
+        .put("openOnWake", Prefs.openOnWake(this))
         .put("canPowerOff", PowerControl.canPowerOff(this))
 
     private fun sendStatus() {
@@ -293,6 +313,16 @@ class BillingService : Service() {
         val wantPlay = status == "playing" || (status == "paused" && !lockOnPause)
         val mode = if (wantPlay) "play" else "lock"
         pushOverlay(m.toString(), false)
+        stUnitName = m.optJSONObject("unit")?.optString("name") ?: ""
+        stTimer = s?.optString("mode") == "timer"
+        stRemaining = s?.optLong("remainingMs", 0L) ?: 0L
+        stRecv = System.currentTimeMillis()
+        if (status == "playing" && stStatus != "playing") {
+            toastShown.clear()
+            val mins = (stRemaining / 60000).toInt()
+            if (overlay == null) toast(if (stTimer) "🎮 Selamat bermain! Sisa waktu $mins menit" else "🎮 Selamat bermain! (Main bebas)")
+        }
+        stStatus = status
 
         if (mode != lastMode) {
             lastMode = mode
@@ -344,13 +374,34 @@ class BillingService : Service() {
                 "powerOff" -> powerOff()
                 "beep" -> TvControl.beep()
                 "reload" -> { overlay?.reload(); Bus.setMode("reload"); reconnectNow() }
+                "setup" -> {
+                    enforceAfter = System.currentTimeMillis() + 10 * 60_000
+                    TvControl.wakeScreen(this)
+                    startActivity(Intent(this, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    ack("Menu teknisi dibuka di TV", "success")
+                }
+                "setHdmi" -> {
+                    val id = m.optString("value")
+                    val label = TvControl.inputs(this).firstOrNull { it.id == id }?.label ?: ""
+                    Prefs.setHdmi(this, id, label)
+                    ack(if (id.isEmpty()) "Pindah HDMI otomatis dimatikan" else "Input PS diatur ke $label", "success")
+                    if (id.isNotEmpty() && lastMode?.startsWith("play") == true) TvControl.openHdmi(this, id)
+                    main.postDelayed({ sendStatus() }, 300)
+                }
+                "setOpenOnWake" -> {
+                    Prefs.setOpenOnWake(this, m.optBoolean("value", true))
+                    ack("Buka otomatis saat TV menyala: " + (if (Prefs.openOnWake(this)) "aktif" else "nonaktif"), "success")
+                    main.postDelayed({ sendStatus() }, 300)
+                }
             }
         } catch (e: Exception) {
             ack("Gagal menjalankan $cmd: ${e.message}", "warning")
         }
         // Toast/pesan: tampilkan di layar yang sedang terlihat
         if (cmd == "toast" || cmd == "message" || cmd == "beep" || cmd == "warning") {
-            if (lastMode == "play" && overlay != null) pushOverlay(raw, true) else Bus.cmd(raw)
+            if (lastMode == "play" && overlay != null) pushOverlay(raw, true)
+            else if (lastMode == "play" && (cmd == "toast" || cmd == "message")) toast(m.optString("text"))
+            else Bus.cmd(raw)
         }
         if (cmd.startsWith("volume") || cmd == "mute") main.postDelayed({ sendStatus() }, 400)
     }
@@ -374,14 +425,43 @@ class BillingService : Service() {
     }
 
     // ---------------------------------------------------------------- overlay
+    fun overlayMode(): String = if (overlay != null) overlayKind else "toast"
+
+    /** Dipanggil saat izin overlay / aksesibilitas berubah. */
+    fun overlayChanged() {
+        main.post {
+            removeOverlay()
+            ensureOverlay()
+            main.postDelayed({ sendStatus() }, 800)
+        }
+    }
+
+    /**
+     * Timer di atas tampilan PlayStation. Dua jalur:
+     *  1. Izin "Tampil di atas aplikasi lain" (TYPE_APPLICATION_OVERLAY)
+     *  2. Layanan Aksesibilitas El Classico (TYPE_ACCESSIBILITY_OVERLAY) — untuk TV yang
+     *     menyembunyikan menu izin overlay. Tidak membutuhkan izin overlay sama sekali.
+     */
     @Suppress("DEPRECATION")
     @SuppressLint("SetJavaScriptEnabled")
     private fun ensureOverlay() {
-        if (overlay != null || !TvControl.canOverlay(this)) return
-        try {
-            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        if (overlay != null) return
+        val acc = PowerAccessibility.instance
+        val ctx: Context
+        val type: Int
+        val kind: String
+        if (TvControl.canOverlay(this)) {
+            ctx = this
+            type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else WindowManager.LayoutParams.TYPE_PHONE
+            kind = "window"
+        } else if (acc != null && Build.VERSION.SDK_INT >= 22) {
+            ctx = acc
+            type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            kind = "accessibility"
+        } else return
+        try {
+            val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val lp = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -393,7 +473,7 @@ class BillingService : Service() {
                 PixelFormat.TRANSLUCENT
             )
             lp.gravity = Gravity.TOP or Gravity.START
-            val wv = WebView(this)
+            val wv = WebView(ctx)
             wv.setBackgroundColor(Color.TRANSPARENT)
             wv.isFocusable = false
             wv.settings.javaScriptEnabled = true
@@ -406,16 +486,22 @@ class BillingService : Service() {
             wv.loadUrl("file:///android_asset/tv/tv.html?mode=overlay&unit=" + Prefs.unit(this))
             wm.addView(wv, lp)
             overlay = wv
+            overlayWm = wm
+            overlayKind = kind
+            overlayReady = false
         } catch (_: Exception) {
             overlay = null
+            overlayWm = null
         }
     }
 
     private fun removeOverlay() {
         val v = overlay ?: return
-        try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v) } catch (_: Exception) { }
+        try { overlayWm?.removeView(v) } catch (_: Exception) { }
         try { v.destroy() } catch (_: Exception) { }
         overlay = null
+        overlayWm = null
+        overlayKind = ""
         overlayReady = false
     }
 
@@ -426,8 +512,37 @@ class BillingService : Service() {
         v.evaluateJavascript("window.ec&&ec.push(" + JSONObject.quote(raw) + ")", null)
     }
 
+    // ---------------------------------------------------------------- notifikasi cadangan
+    private fun toast(text: String) {
+        if (text.isEmpty()) return
+        try { android.widget.Toast.makeText(applicationContext, text, android.widget.Toast.LENGTH_LONG).show() } catch (_: Exception) { }
+    }
+
+    /** Bila timer overlay tidak bisa tampil: peringatan sisa waktu lewat notifikasi sistem. */
+    private val toastTick = object : Runnable {
+        override fun run() {
+            if (overlay == null && stStatus == "playing" && stTimer) {
+                val rem = stRemaining - (System.currentTimeMillis() - stRecv)
+                val sec = (rem / 1000).toInt()
+                for (t in intArrayOf(600, 300, 120, 60, 30, 10)) {
+                    if (sec in 1..t && !toastShown.contains(t)) {
+                        toastShown.add(t)
+                        // tandai juga ambang yang lebih besar agar tidak muncul beruntun
+                        intArrayOf(600, 300, 120, 60, 30, 10).filter { it > t }.forEach { toastShown.add(it) }
+                        val txt = if (t >= 60) "${t / 60} menit" else "$t detik"
+                        toast("⏱ $stUnitName — sisa waktu $txt" + (if (t <= 60) ". Hubungi kasir untuk tambah waktu!" else ""))
+                        if (t <= 60) TvControl.beep()
+                        break
+                    }
+                }
+            }
+            main.postDelayed(this, 1000)
+        }
+    }
+
     inner class OverlayBridge {
         @JavascriptInterface fun getUnit(): String = Prefs.unit(this@BillingService)
+        @JavascriptInterface fun getOverlayMode(): String = overlayKind
         @JavascriptInterface fun ready(mode: String) {
             main.post {
                 overlayReady = true

@@ -1,6 +1,6 @@
 {
   "name": "elclassico-billing-server",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "description": "El Classico Rental PS Billing — server (tanpa dependensi)",
   "main": "server.js",
   "scripts": { "start": "node server.js" },

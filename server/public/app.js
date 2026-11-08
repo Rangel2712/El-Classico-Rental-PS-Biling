@@ -42,6 +42,10 @@
     beep: '<path d="M12 2a7 7 0 0 0-7 7v4l-2 3h18l-2-3V9a7 7 0 0 0-7-7z"/><path d="M9 20a3 3 0 0 0 6 0"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.5 11.5L21 2M17 6l3 3M15 8l2 2"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
     gamepad: '<path d="M6 11h4M8 9v4"/><circle cx="15.5" cy="11" r=".9"/><circle cx="17.5" cy="13" r=".9"/><path d="M7.5 6h9A5.5 5.5 0 0 1 22 11.5v1.7a3.3 3.3 0 0 1-6 1.9L14.8 14H9.2L8 15.1a3.3 3.3 0 0 1-6-1.9v-1.7A5.5 5.5 0 0 1 7.5 6z"/>',
   };
   const ic = (n, s) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (I[n] || '') + '</svg>';
@@ -72,7 +76,11 @@
     cart: [], posCat: 'Semua', posTarget: '', today: null,
     rep: { range: 'today', from: ymd(new Date()), to: ymd(new Date()) },
     setTab: 'general', edit: {}, modalRefresh: null,
+    me: null, loginUser: localStorage.getItem('ec_last_user') || '', pubUsers: [],
   };
+  const can = (perm) => !!(S.me && S.me.perms && S.me.perms[perm]);
+  const initials = (n) => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+  const ROLE_TXT = { owner: 'Admin Utama', admin: 'Admin', kasir: 'Kasir' };
 
   // ================= Suara =================
   let actx;
@@ -110,7 +118,7 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401 && p !== '/api/login') { logout(); throw new Error('Sesi login berakhir'); }
+    if (r.status === 401 && p !== '/api/login') { logout(true); throw new Error('Sesi login berakhir'); }
     if (!r.ok) throw new Error(j.error || 'Gagal');
     return j;
   }
@@ -123,11 +131,30 @@
   let pin = '';
   function renderPin() { $('#pinDots').innerHTML = Array.from({ length: Math.max(4, pin.length) }, (_, i) => '<i class="' + (i < pin.length ? 'f' : '') + '"></i>').join(''); }
   $('#pad').innerHTML = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⏎'].map((k) => '<button data-k="' + k + '">' + k + '</button>').join('');
-  async function tryLogin() {
+  async function loadPublicUsers() {
     try {
-      const r = await api('/api/login', { pin });
-      S.token = r.token; localStorage.setItem('ec_token', S.token); pin = ''; boot();
-    } catch (e) { pin = ''; renderPin(); $('.login .box').classList.add('shake'); setTimeout(() => $('.login .box').classList.remove('shake'), 400); }
+      const r = await fetch('/api/users/public').then((x) => x.json());
+      S.pubUsers = r.users || [];
+      $('#loginBrand').textContent = (r.name || 'El Classico').replace(/ Rental PS$/i, '');
+      if (!S.pubUsers.find((x) => x.id === S.loginUser)) S.loginUser = S.pubUsers.length ? S.pubUsers[0].id : '';
+      $('#loginFoot').style.display = S.pubUsers.length === 1 ? '' : 'none';
+      renderUserPick();
+    } catch (e) { $('#loginErr').textContent = 'Server tidak dapat dihubungi'; }
+  }
+  function renderUserPick() {
+    $('#userPick').innerHTML = S.pubUsers.map((x) => '<div class="upick ' + (x.id === S.loginUser ? 'on' : '') + '" data-u="' + esc(x.id) + '"><span class="avatar ' + x.role + '">' + esc(initials(x.name)) + '</span><b>' + esc(x.name) + '</b><small>' + esc(ROLE_TXT[x.role] || x.role) + '</small></div>').join('');
+    $$('#userPick .upick').forEach((el) => (el.onclick = () => { S.loginUser = el.dataset.u; pin = ''; renderPin(); $('#loginErr').textContent = ''; renderUserPick(); }));
+  }
+  async function tryLogin() {
+    if (!S.loginUser) return;
+    try {
+      const r = await api('/api/login', { userId: S.loginUser, pin });
+      S.token = r.token; S.me = r.user; localStorage.setItem('ec_token', S.token); localStorage.setItem('ec_last_user', S.loginUser);
+      pin = ''; $('#loginErr').textContent = ''; boot();
+    } catch (e) {
+      pin = ''; renderPin(); $('#loginErr').textContent = e.message;
+      $('.login .box').classList.add('shake'); setTimeout(() => $('.login .box').classList.remove('shake'), 400);
+    }
   }
   function pinKey(k) {
     if (k === 'C') pin = pin.slice(0, -1);
@@ -140,10 +167,42 @@
     if ($('#login').classList.contains('hidden')) return;
     if (/^\d$/.test(e.key)) pinKey(e.key); else if (e.key === 'Backspace') pinKey('C'); else if (e.key === 'Enter') pinKey('⏎');
   });
-  function logout() {
-    S.token = ''; localStorage.removeItem('ec_token');
+  function logout(silent) {
+    if (S.token && silent !== true) fetch('/api/logout', { method: 'POST', headers: { 'X-Token': S.token } }).catch(() => {});
+    S.token = ''; S.me = null; localStorage.removeItem('ec_token');
     if (S.ws) { S.ws.onclose = null; S.ws.close(); }
-    $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); renderPin();
+    closeModal();
+    $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); pin = ''; renderPin(); loadPublicUsers();
+  }
+
+  // ================= Profil & menu sesuai izin =================
+  function applyMe() {
+    const me = S.me; if (!me) return;
+    $('#meCard').innerHTML = '<span class="avatar ' + me.role + '">' + esc(initials(me.name)) + '</span><div class="who"><b>' + esc(me.name) + '</b><small>' + esc(me.roleLabel || ROLE_TXT[me.role]) + '</small></div>' +
+      '<div class="meacts"><button class="btn sm" id="meEdit" title="Profil & ganti PIN">' + ic('key', 14) + 'Profil</button><button class="btn sm" id="meOut" title="Keluar">' + ic('logout', 14) + 'Keluar</button></div>';
+    $('#meEdit').onclick = openProfile; $('#meOut').onclick = () => logout();
+    const vis = { dashboard: true, pos: can('fnb'), orders: can('fnb'), report: true, settings: can('settings') || can('backup'), users: can('users'), audit: can('audit') };
+    $$('.nav').forEach((n) => n.classList.toggle('hidden', !vis[n.dataset.view]));
+    $$('.nav[data-view="report"] span')[1].textContent = can('report') ? 'Laporan' : 'Shift Saya';
+    if (!vis[S.view]) S.view = 'dashboard';
+  }
+  function openProfile() {
+    const me = S.me;
+    const m = modal(ic('key') + ' Profil Saya',
+      '<div class="row" style="margin-bottom:16px"><span class="avatar ' + me.role + '" style="width:52px;height:52px;font-size:18px">' + esc(initials(me.name)) + '</span><div><b style="font-size:16px">' + esc(me.name) + '</b><div class="muted">@' + esc(me.username) + ' · <span class="role ' + me.role + '">' + esc(me.roleLabel) + '</span></div></div></div>' +
+      '<div class="field"><label class="f">Nama tampilan</label><input id="pn" value="' + esc(me.name) + '"></div><div class="sep"></div><h3>Ganti PIN</h3>' +
+      '<div class="row"><div class="field" style="flex:1"><label class="f">PIN lama</label><input type="password" id="po" inputmode="numeric" maxlength="8"></div><div class="field" style="flex:1"><label class="f">PIN baru (4–8 angka)</label><input type="password" id="p1" inputmode="numeric" maxlength="8"></div><div class="field" style="flex:1"><label class="f">Ulangi PIN baru</label><input type="password" id="p2" inputmode="numeric" maxlength="8"></div></div>' +
+      '<div class="dim" style="font-size:12px">Hak akses Anda: ' + Object.keys(me.perms).filter((k) => me.perms[k]).length + ' dari ' + Object.keys(me.perms).length + ' izin.</div>',
+      '<button class="btn" data-x>Tutup</button><button class="btn gold" id="ps">' + ic('check', 15) + 'Simpan</button>');
+    $('[data-x]', m).onclick = closeModal;
+    $('#ps', m).onclick = async () => {
+      const body = { name: $('#pn', m).value };
+      if ($('#p1', m).value) {
+        if ($('#p1', m).value !== $('#p2', m).value) return toast('PIN baru tidak sama', 'warning');
+        body.oldPin = $('#po', m).value; body.newPin = $('#p1', m).value;
+      }
+      try { const r = await act('/api/me/update', body, 'Profil disimpan'); S.me = r.user; applyMe(); closeModal(); } catch (e) {}
+    };
   }
 
   // ================= WebSocket =================
@@ -158,7 +217,7 @@
     };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (m.t === 'auth') return logout();
+      if (m.t === 'auth') { toast(m.error || 'Sesi berakhir', 'warning'); return logout(true); }
       if (m.t === 'snapshot') { S.snap = m; S.recvAt = Date.now(); onSnapshot(); }
       if (m.t === 'toast') {
         toast(m.text, m.level); (chime[m.level] || chime.info)();
@@ -173,8 +232,10 @@
     try { S.today = await api('/api/report'); if (S.view === 'dashboard') renderStats(); } catch (e) {}
   }
 
-  function boot() {
+  async function boot() {
+    try { const r = await api('/api/me'); S.me = r.user; } catch (e) { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+    applyMe();
     connect(); loadToday(true); setView(S.view);
   }
 
@@ -226,15 +287,18 @@
   }, 500);
 
   // ================= Navigasi =================
-  const TITLES = { dashboard: ['Dashboard', 'Pantau & kendalikan semua unit PS secara langsung'], pos: ['Kasir F&B', 'Pesanan makanan, minuman & lainnya'], orders: ['Pesanan', 'Antrian pesanan dari setiap unit'], report: ['Laporan', 'Pendapatan & riwayat transaksi'], settings: ['Pengaturan', 'Tarif, paket, unit TV, menu & sistem'] };
+  const TITLES = { dashboard: ['Dashboard', 'Pantau & kendalikan semua unit PS secara langsung'], pos: ['Kasir F&B', 'Pesanan makanan, minuman & lainnya'], orders: ['Pesanan', 'Antrian pesanan dari setiap unit'], report: ['Laporan', 'Pendapatan & riwayat transaksi'], settings: ['Pengaturan', 'Tarif, paket, unit TV, menu & sistem'], users: ['Pengguna', 'Kelola Admin & Karyawan beserta hak aksesnya'], audit: ['Aktivitas', 'Catatan siapa melakukan apa & kapan'] };
   $$('.nav').forEach((n) => (n.onclick = () => setView(n.dataset.view)));
   function setView(v) {
     S.view = v;
     $$('.nav').forEach((n) => n.classList.toggle('active', n.dataset.view === v));
-    $('#viewTitle').textContent = TITLES[v][0]; $('#viewSub').textContent = TITLES[v][1];
+    $('#viewTitle').textContent = v === 'report' && !can('report') ? 'Shift Saya' : TITLES[v][0];
+    $('#viewSub').textContent = v === 'report' && !can('report') ? 'Transaksi yang Anda selesaikan' : TITLES[v][1];
     if (v === 'settings') S.edit = {};
     render();
     if (v === 'report') loadReport();
+    if (v === 'users') loadUsers();
+    if (v === 'audit') loadAudit();
   }
   function onSnapshot() {
     const s = S.snap;
@@ -250,7 +314,7 @@
   function render() {
     const c = $('#content');
     if (!S.snap) { c.innerHTML = '<div class="empty"><div class="big">⏳</div>Memuat data…</div>'; return; }
-    ({ dashboard: renderDashboard, pos: renderPos, orders: renderOrders, report: renderReport, settings: renderSettings })[S.view]();
+    ({ dashboard: renderDashboard, pos: renderPos, orders: renderOrders, report: renderReport, settings: renderSettings, users: renderUsers, audit: renderAudit })[S.view]();
   }
 
   // ================= Dashboard =================
@@ -265,7 +329,7 @@
     const t = S.today || { total: 0, count: 0 };
     el.innerHTML =
       stat('Unit Aktif', active + ' / ' + us.length, us.filter((u) => unitStatus(u) === 'expired').length + ' waktu habis', 'rgba(34,197,94,.1)', 'gamepad') +
-      stat('Pendapatan Hari Ini', rp(t.total), t.count + ' transaksi · berjalan ' + rp(running), 'rgba(245,197,24,.12)', 'pay') +
+      stat(can('report') ? 'Pendapatan Hari Ini' : 'Pendapatan Saya Hari Ini', rp(t.total), t.count + ' transaksi · berjalan ' + rp(running), 'rgba(245,197,24,.12)', 'pay') +
       stat('Pesanan Diproses', pending, 'menunggu diantar', 'rgba(239,68,68,.1)', 'food') +
       stat('TV Online', us.filter((u) => u.online).length + ' / ' + us.length, 'terhubung ke WiFi', 'rgba(29,95,214,.14)', 'wifi');
   }
@@ -281,15 +345,15 @@
       '<div class="toolbar"><div class="seg" id="seg">' +
       [['all', 'Semua'], ['idle', 'Kosong'], ['playing', 'Bermain'], ['paused', 'Dijeda'], ['expired', 'Habis']].map(([k, l]) => '<button class="' + (S.filter === k ? 'on' : '') + '" data-f="' + k + '">' + l + ' (' + counts[k] + ')</button>').join('') +
       '</div><div class="grow" style="flex:1"></div>' +
-      '<button class="btn" id="bulkBtn">' + ic('tvs', 16) + 'Kontrol Semua TV</button>' +
-      '<button class="btn" id="allMsg">' + ic('msg', 16) + 'Pesan ke semua TV</button>' +
-      '<button class="btn" id="addUnit">' + ic('plus', 16) + 'Tambah Unit</button></div>' +
+      (can('tvControl') ? '<button class="btn" id="bulkBtn">' + ic('tvs', 16) + 'Kontrol Semua TV</button>' +
+      '<button class="btn" id="allMsg">' + ic('msg', 16) + 'Pesan ke semua TV</button>' : '') +
+      (can('settings') ? '<button class="btn" id="addUnit">' + ic('plus', 16) + 'Tambah Unit</button>' : '') + '</div>' +
       (list.length ? '<div class="units">' + list.map(unitCard).join('') + '</div>' : '<div class="empty card"><div class="big">🎮</div>Tidak ada unit pada filter ini</div>');
     renderStats();
     $$('#seg button').forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; renderDashboard(); }));
-    $('#addUnit').onclick = () => { S.setTab = 'units'; setView('settings'); };
-    $('#allMsg').onclick = () => promptMsg('*');
-    $('#bulkBtn').onclick = openBulk;
+    if ($('#addUnit')) $('#addUnit').onclick = () => { S.setTab = 'units'; setView('settings'); };
+    if ($('#allMsg')) $('#allMsg').onclick = () => promptMsg('*');
+    if ($('#bulkBtn')) $('#bulkBtn').onclick = openBulk;
     $$('.unit [data-a]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); unitAction(b.dataset.a, b.closest('.unit').dataset.id); }));
     $$('.unit .timebox').forEach((b) => (b.onclick = () => openUnit(b.closest('.unit').dataset.id)));
   }
@@ -305,15 +369,16 @@
     const warn = s && s.mode === 'timer' && st === 'playing' && L.remaining <= S.snap.settings.warningSeconds * 1000;
     const pend = s ? s.orders.filter((o) => o.status === 'diproses') : [];
     let acts;
-    if (!s) acts = '<div class="acts three"><button class="btn gold" data-a="start">' + ic('play', 15) + 'Mulai Sewa</button><button class="btn green" data-a="power" title="Hidupkan TV">' + ic('power', 15) + '</button><button class="btn red" data-a="powerOff" title="Matikan TV">' + ic('powerOff', 15) + '</button><button class="btn" data-a="tv" title="Kontrol TV">' + ic('tv', 15) + '</button></div>';
+    if (!can('session')) acts = '';
+    else if (!s) acts = !can('tvControl') ? '<div class="acts" style="grid-template-columns:1fr"><button class="btn gold" data-a="start">' + ic('play', 15) + 'Mulai Sewa</button></div>' : '<div class="acts three"><button class="btn gold" data-a="start">' + ic('play', 15) + 'Mulai Sewa</button><button class="btn green" data-a="power" title="Hidupkan TV">' + ic('power', 15) + '</button><button class="btn red" data-a="powerOff" title="Matikan TV">' + ic('powerOff', 15) + '</button><button class="btn" data-a="tv" title="Kontrol TV">' + ic('tv', 15) + '</button></div>';
     else acts = '<div class="acts">' +
-      (s.mode === 'timer' ? '<button class="btn green" data-a="extend" title="Tambah waktu">' + ic('plus', 15) + 'Waktu</button>' : '<button class="btn" data-a="tv" title="Kontrol TV">' + ic('tv', 15) + 'TV</button>') +
+      (s.mode === 'timer' ? '<button class="btn green" data-a="extend" title="Tambah waktu">' + ic('plus', 15) + 'Waktu</button>' : '<button class="btn" data-a="tv" title="Kontrol TV" ' + (can('tvControl') ? '' : 'disabled') + '>' + ic('tv', 15) + 'TV</button>') +
       (st === 'paused' ? '<button class="btn amber" data-a="resume">' + ic('play', 15) + 'Lanjut</button>' : '<button class="btn" data-a="pause" ' + (st === 'expired' ? 'disabled' : '') + '>' + ic('pause', 15) + 'Jeda</button>') +
-      '<button class="btn" data-a="order">' + ic('food', 15) + 'Pesan</button>' +
+      (can('fnb') ? '<button class="btn" data-a="order">' + ic('food', 15) + 'Pesan</button>' : '<button class="btn" disabled>' + ic('food', 15) + 'Pesan</button>') +
       '<button class="btn ' + (st === 'expired' ? 'gold' : 'red') + '" data-a="checkout">' + ic('pay', 15) + 'Bayar</button></div>';
     return '<div class="unit ' + st + (warn ? ' warn' : '') + '" data-id="' + esc(u.id) + '" style="--tc:' + esc(ty.color || '#64748b') + '">' +
       '<div class="head"><div class="tv">' + ic('tv', 20) + '</div><div><div class="nm">' + esc(u.name) + '</div><div class="ty">' + esc(ty.name.toUpperCase()) + (u.note ? ' · <span class="muted">' + esc(u.note) + '</span>' : '') + '</div></div>' +
-      '<div class="right">' + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar TV mati / standby">Layar mati</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
+      '<div class="right">' + (u.online && u.info && u.info.kind === 'native' && u.info.overlayMode === 'toast' ? '<span class="chip paused" title="Timer di atas game belum aktif — buka Kontrol TV">Timer ⚠</span>' : '') + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar TV mati / standby">Layar mati</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
       '<div class="timebox" title="Detail & kontrol"><div class="lbl">' + label + '</div>' + time + bar + '</div>' +
       (s ? '<div class="meta"><span>' + ic('user', 13) + ' ' + esc(s.customer || 'Pelanggan') + ' · mulai ' + tm(s.startedAt) + '</span><b class="cost num">' + rp(s.mode === 'open' ? openCost(u, s, L.elapsed) + s.ordersTotal : s.total) + '</b></div>' : '') +
       (pend.length ? '<div class="ordersmini">' + pend.map((o) => '<span class="new">' + esc(o.emoji || '') + ' ' + o.qty + '× ' + esc(o.name) + '</span>').join('') + '</div>' : '') +
@@ -341,6 +406,7 @@
       const r = await api('/api/tv/cmd', { unitId, cmd, value, text });
       if (cmd === 'power') toast(r.note || 'Perintah hidupkan terkirim (Wake-on-LAN)', 'success');
       else if (cmd === 'powerOff') toast('Perintah matikan terkirim ke ' + (unitOf(unitId) || { name: 'TV' }).name, 'success');
+      else if (['setHdmi', 'setOpenOnWake', 'setup'].indexOf(cmd) >= 0) { /* TV membalas sendiri */ }
       else toast('Perintah terkirim ke TV', 'info');
       return r;
     } catch (e) { toast(e.message, 'danger'); }
@@ -423,7 +489,7 @@
       '<div id="liveRem" class="card" style="text-align:center;margin-bottom:16px"></div>' +
       '<label class="f">Pilih paket</label><div class="opts" id="pk">' + S.snap.packages.map((p) => '<div class="opt" data-p="' + esc(p.id) + '"><b>+ ' + esc(p.name) + '</b><div class="pr">' + rp(priceFor(u, p.minutes, p)) + '</div></div>').join('') + '</div>' +
       '<div class="sep"></div><label class="f">Atau menit bebas</label><div class="row wrap" id="qk">' + [5, 10, 15, 30, 45, 60].map((x) => '<button class="btn sm" data-q="' + x + '">+' + x + ' mnt</button>').join('') + '</div>' +
-      '<div class="row" style="margin-top:10px"><input type="number" id="mins" value="30" min="1" style="max-width:140px"><span class="muted">menit</span><label class="row" style="margin-left:auto;gap:8px;font-size:12px" class="muted"><span class="switch"><input type="checkbox" id="minus"><span></span></span>Kurangi waktu</label></div>' +
+      '<div class="row" style="margin-top:10px"><input type="number" id="mins" value="30" min="1" style="max-width:140px"><span class="muted">menit</span>' + (can('reduceTime') ? '<label class="row" style="margin-left:auto;gap:8px;font-size:12px"><span class="switch"><input type="checkbox" id="minus"><span></span></span>Kurangi waktu</label>' : '') + '</div>' +
       '<div class="total"><span class="muted" id="lbl">Biaya tambahan</span><b class="num" id="sum"></b></div>',
       '<button class="btn" data-x>Batal</button><button class="btn green lg" id="go">' + ic('plus', 16) + 'Tambahkan</button>');
     $('[data-x]', m).onclick = closeModal;
@@ -438,7 +504,7 @@
     $$('#pk .opt', m).forEach((o) => (o.onclick = () => { pkgId = pkgId === o.dataset.p ? null : o.dataset.p; upd(); }));
     $$('#qk [data-q]', m).forEach((b) => (b.onclick = () => { pkgId = null; minutes = Number(b.dataset.q); $('#mins', m).value = minutes; upd(); }));
     $('#mins', m).oninput = () => { pkgId = null; minutes = Math.max(1, Number($('#mins', m).value) || 0); upd(); };
-    $('#minus', m).onchange = (e) => { minus = e.target.checked; pkgId = null; upd(); };
+    if ($('#minus', m)) $('#minus', m).onchange = (e) => { minus = e.target.checked; pkgId = null; upd(); };
     S.modalRefresh = () => {
       const uu = unitOf(id); if (!uu || !uu.session) return closeModal();
       const L = live(uu.session);
@@ -493,7 +559,7 @@
     const u = unitOf(id); const s = u.session;
     const m = modal('Pembayaran · ' + esc(u.name),
       '<div class="kv" id="kv"></div><div class="sep"></div><div id="lines" style="display:grid;gap:8px"></div><div class="sep"></div>' +
-      '<div class="row"><div class="field" style="flex:1"><label class="f">Diskon (Rp)</label><input type="number" id="disc" value="0" min="0"></div><div class="field" style="flex:1"><label class="f">Metode</label><select id="meth"><option>Tunai</option><option>QRIS</option><option>Transfer</option><option>E-Wallet</option><option>Kartu Member</option></select></div></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label class="f">Diskon (Rp)</label><input type="number" id="disc" value="0" min="0" ' + (can('discount') ? '' : 'disabled title="Tidak punya izin diskon"') + '></div><div class="field" style="flex:1"><label class="f">Metode</label><select id="meth"><option>Tunai</option><option>QRIS</option><option>Transfer</option><option>E-Wallet</option><option>Kartu Member</option></select></div></div>' +
       '<div class="total"><span class="muted">TOTAL BAYAR</span><b class="num" id="tot"></b></div>' +
       '<div class="field" style="margin-top:14px"><label class="f">Uang diterima</label><input type="number" id="paid" style="font-size:18px;font-weight:700"></div>' +
       '<div class="row wrap" id="cash"></div><div class="spread" style="margin-top:12px"><span class="muted">Kembalian</span><b class="num gold-t" id="chg" style="font-size:18px">Rp 0</b></div>',
@@ -538,7 +604,7 @@
     return '<div class="receipt"><h4>' + esc(st.name) + '</h4><div class="c">' + esc(st.address || '') + (st.phone ? '<br>' + esc(st.phone) : '') + '</div><div class="ln"></div>' +
       '<div class="rw"><span>' + esc(x.id) + '</span></div><div class="rw"><span>' + new Date(x.endedAt).toLocaleString('id-ID') + '</span></div>' +
       (x.kind === 'rental' ? '<div class="rw"><span>Unit</span><span>' + esc(x.unitName) + ' (' + esc(x.typeName) + ')</span></div><div class="rw"><span>Main</span><span>' + tm(x.startedAt) + '–' + tm(x.endedAt) + '</span></div><div class="rw"><span>Durasi</span><span>' + hms(x.playedMs) + '</span></div>' : '') +
-      (x.customer ? '<div class="rw"><span>Pelanggan</span><span>' + esc(x.customer) + '</span></div>' : '') + '<div class="ln"></div>' +
+      (x.customer ? '<div class="rw"><span>Pelanggan</span><span>' + esc(x.customer) + '</span></div>' : '') + (x.cashierName ? '<div class="rw"><span>Kasir</span><span>' + esc(x.cashierName) + '</span></div>' : '') + '<div class="ln"></div>' +
       (x.kind === 'rental' ? (x.mode === 'timer' ? x.charges.map((c) => '<div class="rw"><span>' + esc(c.label) + '</span><span>' + rp(c.price) + '</span></div>').join('') : '<div class="rw"><span>Main bebas</span><span>' + rp(x.rentalCost) + '</span></div>') : '') +
       x.orders.map((o) => '<div class="rw"><span>' + o.qty + 'x ' + esc(o.name) + '</span><span>' + rp(o.qty * o.price) + '</span></div>').join('') +
       '<div class="ln"></div>' + (x.discount ? '<div class="rw"><span>Diskon</span><span>-' + rp(x.discount) + '</span></div>' : '') +
@@ -553,9 +619,9 @@
 
   // ---- Detail unit + kontrol TV ----
   function openUnit(id, tab) {
-    let t = tab || 'session';
+    let t = tab === 'tv' && !can('tvControl') ? 'session' : (tab || 'session');
     const u0 = unitOf(id);
-    const m = modal(ic('tv') + ' ' + esc(u0.name), '<div class="tabs" id="ut"><button data-t="session">Sesi</button><button data-t="tv">Kontrol TV</button><button data-t="log">Riwayat</button></div><div id="ub"></div>', '', 'wide');
+    const m = modal(ic('tv') + ' ' + esc(u0.name), '<div class="tabs" id="ut"><button data-t="session">Sesi</button>' + (can('tvControl') ? '<button data-t="tv">Kontrol TV</button>' : '') + '<button data-t="log">Riwayat</button></div><div id="ub"></div>', '', 'wide');
     function draw() {
       const u = unitOf(id); if (!u) return closeModal();
       $$('#ut button', m).forEach((b) => b.classList.toggle('on', b.dataset.t === t));
@@ -568,7 +634,7 @@
         const L = live(s);
         b.innerHTML = '<div class="grid" style="grid-template-columns:1fr 1fr">' +
           '<div class="card" style="text-align:center"><div class="muted" style="font-size:11px;font-weight:700;letter-spacing:1px">' + (s.mode === 'timer' ? 'SISA WAKTU' : 'WAKTU BERJALAN') + '</div><div class="mono" id="bigT" style="font-size:44px;font-weight:700;color:var(--gold)">' + hms(s.mode === 'timer' ? L.remaining : L.elapsed) + '</div><span class="chip ' + s.status + '">' + STATUS[s.status] + '</span></div>' +
-          '<div class="card"><div class="kv"><div>Pelanggan</div><div>' + esc(s.customer || '-') + '</div><div>Mulai</div><div>' + dt(s.startedAt) + '</div><div>Mode</div><div>' + (s.mode === 'timer' ? 'Paket waktu' : 'Main bebas') + '</div><div>Sewa</div><div class="num">' + rp(s.mode === 'open' ? openCost(u, s, L.elapsed) : s.rentalCost) + '</div><div>F&amp;B</div><div class="num">' + rp(s.ordersTotal) + '</div></div></div></div>' +
+          '<div class="card"><div class="kv"><div>Pelanggan</div><div>' + esc(s.customer || '-') + '</div><div>Mulai</div><div>' + dt(s.startedAt) + '</div>' + (s.startedBy ? '<div>Dimulai oleh</div><div>' + esc(s.startedBy) + '</div>' : '') + '<div>Mode</div><div>' + (s.mode === 'timer' ? 'Paket waktu' : 'Main bebas') + '</div><div>Sewa</div><div class="num">' + rp(s.mode === 'open' ? openCost(u, s, L.elapsed) : s.rentalCost) + '</div><div>F&amp;B</div><div class="num">' + rp(s.ordersTotal) + '</div></div></div></div>' +
           '<div class="row wrap" style="margin-top:16px">' +
           (s.mode === 'timer' ? '<button class="btn green" data-a="extend">' + ic('plus', 15) + 'Tambah Waktu</button>' : '') +
           (s.status === 'paused' ? '<button class="btn amber" data-a="resume">' + ic('play', 15) + 'Lanjutkan</button>' : '<button class="btn" data-a="pause">' + ic('pause', 15) + 'Jeda</button>') +
@@ -583,6 +649,7 @@
       } else if (t === 'tv') {
         const inf = u.info || {};
         b.innerHTML = '<div class="spread" style="margin-bottom:14px"><div><span class="dot ' + (u.online ? 'on' : 'off') + '" style="display:inline-block;margin-right:8px"></span><b>' + (u.online ? 'TV Online' : 'TV Offline') + '</b><div class="muted" style="font-size:12px;margin-top:4px">' + esc([inf.model, inf.android ? 'Android ' + inf.android : '', inf.ip, inf.kind === 'native' ? 'APK v' + (inf.appVersion || '') : inf.kind === 'web' ? 'Mode browser' : ''].filter(Boolean).join(' · ') || 'Belum ada info perangkat') + '</div></div><div class="muted mono" style="font-size:12px">MAC: ' + esc(u.mac || '— belum diisi') + '</div></div>' +
+          (inf.kind === 'native' ? tvSetupPanel(u, inf) : '') +
           '<div class="vol">' + ic('vol', 20) + '<input type="range" id="vr" min="0" max="' + (inf.maxVolume || 100) + '" value="' + (inf.volume != null ? inf.volume : 10) + '"><span class="v" id="vv">' + (inf.volume != null ? inf.volume : '–') + '</span></div>' +
           '<div class="tvctl" style="margin-top:12px">' +
           [['power', 'power', 'Hidupkan TV'], ['powerOff', 'powerOff', 'Matikan TV'], ['hdmi', 'hdmi', 'Ke Input HDMI'], ['lock', 'lock', 'Layar Kunci'],
@@ -596,9 +663,12 @@
         $('#vr', b).oninput = (e) => { $('#vv', b).textContent = e.target.value; clearTimeout(vt); vt = setTimeout(() => tvCmd(id, 'volume', Number(e.target.value)), 150); };
         $$('[data-c]', b).forEach((x) => (x.onclick = () => (x.dataset.c === 'powerOff' ? powerOff(id) : tvCmd(id, x.dataset.c))));
         $('#msgB', b).onclick = () => { const v = $('#msgT', b).value.trim(); if (v) { tvCmd(id, 'message', null, v); $('#msgT', b).value = ''; } };
+        if ($('#hdmiSel', b)) $('#hdmiSel', b).onchange = (e) => tvCmd(id, 'setHdmi', e.target.value);
+        if ($('#wakeSw', b)) $('#wakeSw', b).onchange = (e) => tvCmd(id, 'setOpenOnWake', e.target.checked);
+        if ($('#setupBtn', b)) $('#setupBtn', b).onclick = () => tvCmd(id, 'setup');
       } else {
         const s2 = u.session;
-        b.innerHTML = s2 && s2.log.length ? '<table class="t"><tbody>' + s2.log.slice().reverse().map((l) => '<tr><td class="muted mono" style="width:90px">' + tm(l.at) + '</td><td>' + esc(l.text) + '</td></tr>').join('') + '</tbody></table>' : '<div class="empty">Belum ada aktivitas sesi</div>';
+        b.innerHTML = s2 && s2.log.length ? '<table class="t"><tbody>' + s2.log.slice().reverse().map((l) => '<tr><td class="muted mono" style="width:90px">' + tm(l.at) + '</td><td>' + esc(l.text) + '</td><td class="muted r">' + esc(l.by || '') + '</td></tr>').join('') + '</tbody></table>' : '<div class="empty">Belum ada aktivitas sesi</div>';
       }
     }
     $$('#ut button', m).forEach((x) => (x.onclick = () => { t = x.dataset.t; draw(); }));
@@ -615,6 +685,21 @@
     const m = modal('Pindah Unit · ' + esc(u.name), free.length ? '<p class="muted" style="margin-top:0">Pilih unit tujuan. Sisa waktu & pesanan ikut pindah.</p><div class="opts">' + free.map((x) => '<div class="opt" data-u="' + esc(x.id) + '"><b>' + esc(x.name) + '</b><small>' + esc(typeOf(x.type).name) + '</small></div>').join('') + '</div>' : '<div class="empty">Tidak ada unit kosong</div>');
     $$('[data-u]', m).forEach((o) => (o.onclick = async () => { try { await act('/api/session/move', { unitId: id, toUnitId: o.dataset.u }, 'Sesi dipindahkan'); closeModal(); } catch (e) {} }));
   }
+  // Status & pengaturan aplikasi TV yang bisa diubah dari panel
+  function tvSetupPanel(u, inf) {
+    const om = inf.overlayMode;
+    const omTxt = om === 'window' ? '<span class="chip playing">aktif · overlay</span>' : om === 'accessibility' ? '<span class="chip playing">aktif · aksesibilitas</span>' : '<span class="chip expired">belum aktif</span>';
+    const inputs = inf.inputs || [];
+    return '<div class="card" style="margin-bottom:12px;padding:14px">' +
+      '<div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">' +
+      '<div><div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">Timer di pojok layar saat bermain</div>' + omTxt +
+      (om === 'toast' || !om ? '<div class="dim" style="font-size:12px;margin-top:6px;line-height:1.5">Hanya notifikasi singkat. Klik <b>Buka Menu Teknisi</b> lalu tekan <b>Aktifkan Aksesibilitas El Classico</b> di TV.</div>' : '') + '</div>' +
+      '<div><div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">Matikan TV</div>' + (inf.canPowerOff ? '<span class="chip playing">siap</span>' : '<span class="chip paused">layar hitam saja</span>') + '</div>' +
+      '<div><label class="f">Input HDMI PlayStation</label><select id="hdmiSel"><option value="">— Tidak pindah otomatis —</option>' + inputs.map((x) => '<option value="' + esc(x.id) + '" ' + (x.id === inf.hdmiId ? 'selected' : '') + '>' + esc(x.label) + '</option>').join('') + '</select>' + (inputs.length ? '' : '<div class="dim" style="font-size:12px;margin-top:4px">TV tidak melaporkan daftar HDMI</div>') + '</div>' +
+      '<div><label class="f">Saat TV dinyalakan</label><label class="row" style="gap:10px;font-size:13px;margin-top:8px"><span class="switch"><input type="checkbox" id="wakeSw" ' + (inf.openOnWake !== false ? 'checked' : '') + '><span></span></span>Buka El Classico otomatis</label></div>' +
+      '</div><button class="btn blue" id="setupBtn" style="margin-top:12px">' + ic('gear', 15) + 'Buka Menu Teknisi di TV</button></div>';
+  }
+
   // ---- Kontrol banyak TV sekaligus ----
   function openBulk() {
     const sel = new Set(S.snap.units.map((u) => u.id));
@@ -709,7 +794,7 @@
     rows.sort((a, b) => (a.o.status === b.o.status ? b.o.at - a.o.at : a.o.status === 'diproses' ? -1 : 1));
     $('#content').innerHTML = '<div class="card">' + (rows.length ? '<table class="t"><thead><tr><th>Waktu</th><th>Unit</th><th>Pesanan</th><th>Status</th><th class="r">Subtotal</th><th></th></tr></thead><tbody>' + rows.map(({ u, o }) =>
       '<tr><td class="mono muted">' + tm(o.at) + '</td><td><b>' + esc(u.name) + '</b><div class="muted" style="font-size:12px">' + esc(u.session.customer || '') + '</div></td><td><span style="font-size:18px">' + esc(o.emoji) + '</span> ' + o.qty + '× ' + esc(o.name) + (o.note ? '<div class="muted">' + esc(o.note) + '</div>' : '') + '</td><td><span class="chip ' + (o.status === 'diantar' ? 'playing' : 'paused') + '">' + esc(o.status) + '</span></td><td class="r num">' + rp(o.qty * o.price) + '</td><td class="r">' +
-      (o.status === 'diproses' ? '<button class="btn sm green" data-s="' + u.id + '|' + o.id + '">' + ic('check', 14) + 'Antar</button> ' : '') + '<button class="btn sm red" data-r="' + u.id + '|' + o.id + '" title="Batalkan">' + ic('trash', 14) + '</button></td></tr>').join('') + '</tbody></table>'
+      (o.status === 'diproses' ? '<button class="btn sm green" data-s="' + u.id + '|' + o.id + '">' + ic('check', 14) + 'Antar</button> ' : '') + (can('cancelOrder') ? '<button class="btn sm red" data-r="' + u.id + '|' + o.id + '" title="Batalkan">' + ic('trash', 14) + '</button>' : '') + '</td></tr>').join('') + '</tbody></table>'
       : '<div class="empty"><div class="big">🍽️</div>Belum ada pesanan dari unit aktif.<br>Tambahkan lewat tombol <b>Pesan</b> di kartu unit atau menu Kasir F&amp;B.</div>') + '</div>';
     $$('[data-s]').forEach((b) => (b.onclick = () => { const [unitId, orderId] = b.dataset.s.split('|'); act('/api/session/orderStatus', { unitId, orderId, status: 'diantar' }); }));
     $$('[data-r]').forEach((b) => (b.onclick = async () => { const [unitId, orderId] = b.dataset.r.split('|'); if (await confirmBox('Batalkan pesanan?', 'Pesanan dihapus dari tagihan dan stok dikembalikan.', 'Batalkan', 'red')) act('/api/session/orderRemove', { unitId, orderId }, 'Pesanan dibatalkan'); }));
@@ -730,7 +815,9 @@
     const r = S.report;
     let h = '<div class="toolbar"><div class="seg" id="rr">' + [['today', 'Hari ini'], ['yesterday', 'Kemarin'], ['7d', '7 Hari'], ['month', 'Bulan ini']].map(([k, l]) => '<button class="' + (S.rep.range === k ? 'on' : '') + '" data-r="' + k + '">' + l + '</button>').join('') + '</div>' +
       '<input type="date" id="rf" value="' + S.rep.from + '" style="width:auto"><span class="muted">s/d</span><input type="date" id="rt" value="' + S.rep.to + '" style="width:auto"><span style="flex:1"></span>' +
-      '<a class="btn" href="/api/export.csv?from=' + S.rep.from + '&to=' + S.rep.to + '&token=' + encodeURIComponent(S.token) + '">' + ic('download', 15) + 'Ekspor CSV / Excel</a></div>';
+      '<button class="btn" id="shiftPrint">' + ic('print', 15) + (can('report') ? 'Cetak Rekap' : 'Cetak Rekap Shift') + '</button>' +
+      '<a class="btn" href="/api/export.csv?from=' + S.rep.from + '&to=' + S.rep.to + '&token=' + encodeURIComponent(S.token) + '">' + ic('download', 15) + 'Ekspor CSV / Excel</a></div>' +
+      (r && r.limited ? '<div class="notice">Anda melihat <b>transaksi Anda sendiri</b>. Gunakan <b>Cetak Rekap Shift</b> saat serah terima / tutup kasir.</div>' : '');
     if (!r) { $('#content').innerHTML = h + '<div class="empty">Memuat…</div>'; bindRep(); return; }
     h += '<div class="stats">' + stat('Total Pendapatan', rp(r.total), r.count + ' transaksi', 'rgba(245,197,24,.12)', 'pay') + stat('Sewa PS', rp(r.rental), 'jam main ' + hm(r.playedMs), 'rgba(139,92,246,.14)', 'gamepad') + stat('Makanan & Minuman', rp(r.fnb), r.byItem.reduce((a, x) => a + x.qty, 0) + ' item terjual', 'rgba(34,197,94,.1)', 'food') + stat('Diskon', rp(r.discount), 'potongan diberikan', 'rgba(239,68,68,.1)', 'minus') + '</div>';
     const days = Object.keys(r.byDay).sort();
@@ -739,11 +826,28 @@
     const mx = Math.max(1, ...series.map((x) => x[1]));
     h += '<div class="grid" style="grid-template-columns:2fr 1fr;margin-bottom:16px"><div class="card"><h3>' + (multi ? 'Pendapatan per hari' : 'Pendapatan per jam mulai') + '</h3><div class="chart">' + series.map(([l, v]) => '<div class="c" title="' + l + ': ' + rp(v) + '"><i style="height:' + (v / mx * 100) + '%"></i><span>' + l + '</span></div>').join('') + '</div></div>' +
       '<div class="card"><h3>Menu terlaris</h3>' + (r.byItem.length ? '<table class="t"><tbody>' + r.byItem.slice(0, 8).map((x) => '<tr><td>' + esc(x.name) + '</td><td class="r num">' + x.qty + '×</td><td class="r num">' + rp(x.total) + '</td></tr>').join('') + '</tbody></table>' : '<div class="dim">Belum ada penjualan</div>') + '</div></div>';
+    h += '<div class="grid" style="grid-template-columns:' + (r.limited ? '1fr' : '1fr 1fr') + ';margin-bottom:16px">' +
+      (r.limited ? '' : '<div class="card"><h3>Per kasir</h3>' + (r.byCashier.length ? '<table class="t"><tbody>' + r.byCashier.map((x) => '<tr><td><b>' + esc(x.name) + '</b></td><td class="r num">' + x.count + ' trx</td><td class="r num">' + rp(x.total) + '</td></tr>').join('') + '</tbody></table>' : '<div class="dim">Belum ada data</div>') + '</div>') +
+      '<div class="card"><h3>Per metode bayar</h3>' + (Object.keys(r.byMethod || {}).length ? '<table class="t"><tbody>' + Object.keys(r.byMethod).map((k) => '<tr><td>' + esc(k) + '</td><td class="r num"><b>' + rp(r.byMethod[k]) + '</b></td></tr>').join('') + '</tbody></table>' : '<div class="dim">Belum ada data</div>') + '</div></div>';
     h += '<div class="card" style="margin-bottom:16px"><h3>Per unit</h3>' + (r.byUnit.length ? '<table class="t"><thead><tr><th>Unit</th><th class="r">Transaksi</th><th class="r">Jam main</th><th class="r">Pendapatan</th></tr></thead><tbody>' + r.byUnit.map((x) => '<tr><td><b>' + esc(x.name) + '</b></td><td class="r num">' + x.count + '</td><td class="r num">' + hm(x.playedMs) + '</td><td class="r num">' + rp(x.total) + '</td></tr>').join('') + '</tbody></table>' : '<div class="dim">Belum ada data</div>') + '</div>';
-    h += '<div class="card"><h3>Riwayat transaksi</h3>' + (r.transactions.length ? '<table class="t"><thead><tr><th>ID</th><th>Selesai</th><th>Unit</th><th>Pelanggan</th><th class="r">Durasi</th><th class="r">Sewa</th><th class="r">F&amp;B</th><th class="r">Total</th><th>Metode</th><th></th></tr></thead><tbody>' + r.transactions.map((x) => '<tr><td class="mono" style="font-size:12px">' + esc(x.id) + '</td><td>' + dt(x.endedAt) + '</td><td>' + esc(x.unitName) + '</td><td>' + esc(x.customer || '-') + '</td><td class="r num">' + (x.playedMs ? hm(x.playedMs) : '-') + '</td><td class="r num">' + rp(x.rentalCost) + '</td><td class="r num">' + rp(x.ordersTotal) + '</td><td class="r num"><b>' + rp(x.total) + '</b></td><td>' + esc(x.method) + '</td><td class="r" style="white-space:nowrap"><button class="btn sm" data-p="' + esc(x.id) + '" title="Cetak ulang">' + ic('print', 14) + '</button> <button class="btn sm red" data-d="' + esc(x.id) + '" title="Hapus">' + ic('trash', 14) + '</button></td></tr>').join('') + '</tbody></table>' : '<div class="empty">Belum ada transaksi pada periode ini</div>') + '</div>';
+    h += '<div class="card"><h3>Riwayat transaksi</h3>' + (r.transactions.length ? '<table class="t"><thead><tr><th>ID</th><th>Selesai</th><th>Unit</th><th>Pelanggan</th><th class="r">Durasi</th><th class="r">Sewa</th><th class="r">F&amp;B</th><th class="r">Total</th><th>Metode</th><th>Kasir</th><th></th></tr></thead><tbody>' + r.transactions.map((x) => '<tr><td class="mono" style="font-size:12px">' + esc(x.id) + '</td><td>' + dt(x.endedAt) + '</td><td>' + esc(x.unitName) + '</td><td>' + esc(x.customer || '-') + '</td><td class="r num">' + (x.playedMs ? hm(x.playedMs) : '-') + '</td><td class="r num">' + rp(x.rentalCost) + '</td><td class="r num">' + rp(x.ordersTotal) + '</td><td class="r num"><b>' + rp(x.total) + '</b></td><td>' + esc(x.method) + '</td><td>' + esc(x.cashierName || '-') + '</td><td class="r" style="white-space:nowrap"><button class="btn sm" data-p="' + esc(x.id) + '" title="Cetak ulang">' + ic('print', 14) + '</button>' + (can('deleteTrx') ? ' <button class="btn sm red" data-d="' + esc(x.id) + '" title="Hapus">' + ic('trash', 14) + '</button>' : '') + '</td></tr>').join('') + '</tbody></table>' : '<div class="empty">Belum ada transaksi pada periode ini</div>') + '</div>';
     $('#content').innerHTML = h; bindRep();
+    $('#shiftPrint').onclick = () => printShift(r);
     $$('[data-p]').forEach((b) => (b.onclick = () => showReceipt(r.transactions.find((x) => x.id === b.dataset.p))));
     $$('[data-d]').forEach((b) => (b.onclick = async () => { if (await confirmBox('Hapus transaksi?', 'Transaksi <b>' + esc(b.dataset.d) + '</b> akan dihapus permanen dari laporan.', 'Hapus', 'red')) { await act('/api/transaction/delete', { id: b.dataset.d }, 'Transaksi dihapus'); loadReport(); loadToday(true); } }));
+  }
+  function printShift(r) {
+    const st = S.snap.settings;
+    const range = new Date(r.from).toLocaleDateString('id-ID') + (S.rep.from !== S.rep.to ? ' – ' + new Date(r.to).toLocaleDateString('id-ID') : '');
+    $('#printArea').innerHTML = '<div class="receipt"><h4>' + esc(st.name) + '</h4><div class="c">' + (r.limited ? 'REKAP SHIFT KASIR' : 'REKAP PENDAPATAN') + '</div><div class="ln"></div>' +
+      '<div class="rw"><span>Periode</span><span>' + range + '</span></div>' + (r.limited ? '<div class="rw"><span>Kasir</span><span>' + esc(S.me.name) + '</span></div>' : '') +
+      '<div class="rw"><span>Dicetak</span><span>' + new Date().toLocaleString('id-ID') + '</span></div><div class="ln"></div>' +
+      '<div class="rw"><span>Transaksi</span><span>' + r.count + '</span></div><div class="rw"><span>Sewa PS</span><span>' + rp(r.rental) + '</span></div><div class="rw"><span>F&amp;B</span><span>' + rp(r.fnb) + '</span></div><div class="rw"><span>Diskon</span><span>-' + rp(r.discount) + '</span></div>' +
+      '<div class="ln"></div>' + Object.keys(r.byMethod || {}).map((k) => '<div class="rw"><span>' + esc(k) + '</span><span>' + rp(r.byMethod[k]) + '</span></div>').join('') +
+      '<div class="ln"></div><div class="rw big"><span>TOTAL</span><span>' + rp(r.total) + '</span></div>' +
+      (!r.limited && r.byCashier.length ? '<div class="ln"></div>' + r.byCashier.map((x) => '<div class="rw"><span>' + esc(x.name) + '</span><span>' + rp(x.total) + '</span></div>').join('') : '') +
+      '<div class="ln"></div><div class="c">Tanda tangan<br><br><br>( ' + esc(S.me.name) + ' )</div></div>';
+    window.print();
   }
   function bindRep() {
     $$('#rr button').forEach((b) => (b.onclick = () => { setRange(b.dataset.r); S.report = null; renderReport(); loadReport(); }));
@@ -754,7 +858,8 @@
   // ================= Pengaturan =================
   const clone = (x) => JSON.parse(JSON.stringify(x));
   function renderSettings() {
-    const tabs = [['general', 'Umum'], ['types', 'Tipe & Tarif'], ['packages', 'Paket'], ['units', 'Unit TV'], ['menu', 'Menu F&B'], ['system', 'Koneksi & Data']];
+    const tabs = (can('settings') ? [['general', 'Umum'], ['types', 'Tipe & Tarif'], ['packages', 'Paket'], ['units', 'Unit TV'], ['menu', 'Menu F&B']] : []).concat([['system', 'Koneksi & Data']]);
+    if (!tabs.find((t) => t[0] === S.setTab)) S.setTab = tabs[0][0];
     $('#content').innerHTML = '<div class="tabs" id="stb">' + tabs.map(([k, l]) => '<button data-t="' + k + '" class="' + (S.setTab === k ? 'on' : '') + '">' + l + '</button>').join('') + '</div><div id="sb"></div>';
     $$('#stb button').forEach((b) => (b.onclick = () => { S.setTab = b.dataset.t; renderSettings(); }));
     ({ general: setGeneral, types: () => setTable('types'), packages: setPackages, units: () => setTable('units'), menu: () => setTable('menu'), system: setSystem })[S.setTab]();
@@ -772,15 +877,39 @@
       sw('g_showTimerPill', s.showTimerPill, 'Tampilkan timer kecil di TV', 'Sisa waktu di pojok layar selama bermain') +
       sw('g_autoOffAfterCheckout', s.autoOffAfterCheckout, 'Matikan TV otomatis setelah bayar', 'TV mati ±6 detik setelah transaksi selesai') +
       '<div class="field"><label class="f">Matikan TV kosong otomatis setelah (menit, 0 = tidak)</label><input type="number" id="g_idleOffMinutes" value="' + (s.idleOffMinutes || 0) + '"></div>' +
-      '<h3 style="margin-top:20px">Keamanan</h3><div class="field"><label class="f">PIN kasir baru (4–8 digit, kosongkan jika tidak diganti)</label><input type="password" id="g_newPin" inputmode="numeric" maxlength="8"></div>' +
-      '</div></div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" id="lo">' + ic('logout', 15) + 'Keluar</button><button class="btn gold lg" id="sv">' + ic('check', 16) + 'Simpan Pengaturan</button></div>';
-    $('#lo').onclick = logout;
+
+      '</div><div class="card" style="grid-column:1/-1"><h3>Timer di Layar TV saat Bermain</h3><div class="grid" style="grid-template-columns:1.1fr 1fr;gap:20px"><div>' +
+      '<div class="tvprev" id="tvprev"><div class="gm">TAMPILAN GAME</div><div class="pp" id="pp"><i></i><span>TV 01</span><b>00:42:15</b></div></div>' +
+      '<div class="dim" style="font-size:12px;margin-top:8px">Pratinjau. Timer tidak bisa disentuh/dipilih sehingga tidak mengganggu stik PS.</div></div><div>' +
+      '<div class="row" style="margin-top:12px"><div class="field" style="flex:1"><label class="f">Mode tampil</label><select id="g_pillMode">' + [['always', 'Selalu tampil'], ['peek', 'Muncul sebentar tiap N menit'], ['last5', 'Hanya 5 menit terakhir']].map(([k, l]) => '<option value="' + k + '" ' + ((s.pillMode || 'always') === k ? 'selected' : '') + '>' + l + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="flex:1"><label class="f">Muncul tiap (menit)</label><input type="number" id="g_pillPeekEvery" min="1" max="60" value="' + (s.pillPeekEvery || 10) + '"></div></div>' +
+      '<div class="field"><label class="f">Transparansi timer · <span id="opv">' + Math.round((s.pillOpacity || 0.55) * 100) + '%</span> terlihat</label><input type="range" id="g_pillOpacity" min="20" max="100" value="' + Math.round((s.pillOpacity || 0.55) * 100) + '" style="width:100%"></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label class="f">Posisi timer</label><select id="g_pillPosition">' + [['tr', 'Kanan atas'], ['tl', 'Kiri atas'], ['br', 'Kanan bawah'], ['bl', 'Kiri bawah']].map(([k, l]) => '<option value="' + k + '" ' + (s.pillPosition === k ? 'selected' : '') + '>' + l + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="flex:1"><label class="f">Ukuran timer</label><select id="g_pillSize">' + [['s', 'Kecil'], ['m', 'Sedang'], ['l', 'Besar']].map(([k, l]) => '<option value="' + k + '" ' + ((s.pillSize || 'm') === k ? 'selected' : '') + '>' + l + '</option>').join('') + '</select></div></div>' +
+      '<div class="dim" style="font-size:12px;margin:-6px 0 12px">Warna timer: <b style="color:#86efac">hijau</b> normal · <b style="color:#fcd34d">kuning</b> sisa ≤ 5 menit · <b style="color:#fca5a5">merah berkedip</b> sisa ≤ waktu notifikasi (default 1 menit)</div>' +
+      sw('g_bigCountdown', !!s.bigCountdown, 'Hitung mundur besar di tengah layar', 'Muncul saat sisa waktu ≤ waktu notifikasi; matikan jika cukup timer pojok saja') +
+      '</div></div>' +
+      '</div></div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn gold lg" id="sv">' + ic('check', 16) + 'Simpan Pengaturan</button></div>';
+    // Pratinjau timer
+    const prev = () => {
+      const pp = $('#pp'); if (!pp) return;
+      const pos = $('#g_pillPosition').value, size = $('#g_pillSize').value, op = Number($('#g_pillOpacity').value) / 100;
+      $('#opv').textContent = Math.round(op * 100) + '%';
+      pp.style.top = pos[0] === 't' ? '8px' : 'auto'; pp.style.bottom = pos[0] === 'b' ? '8px' : 'auto';
+      pp.style.right = pos[1] === 'r' ? '8px' : 'auto'; pp.style.left = pos[1] === 'l' ? '8px' : 'auto';
+      pp.style.opacity = op; pp.style.transform = 'scale(' + ({ s: 0.85, m: 1, l: 1.3 }[size]) + ')';
+      pp.style.transformOrigin = (pos[0] === 't' ? 'top ' : 'bottom ') + (pos[1] === 'r' ? 'right' : 'left');
+      $('#g_pillPeekEvery').disabled = $('#g_pillMode').value !== 'peek';
+    };
+    ['g_pillPosition', 'g_pillSize', 'g_pillOpacity', 'g_pillMode'].forEach((id) => { $('#' + id).oninput = $('#' + id).onchange = prev; });
+    prev();
     $('#sv').onclick = async () => {
       const v = {};
       ['name', 'tagline', 'address', 'phone', 'receiptFooter', 'warningSeconds', 'rounding', 'openBillingBlock', 'idleOffMinutes'].forEach((k) => (v[k] = $('#g_' + k).value));
-      ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout'].forEach((k) => (v[k] = $('#g_' + k).checked));
-      const np = $('#g_newPin').value.trim(); if (np) v.newPin = np;
-      try { await act('/api/config/settings', { value: v }, 'Pengaturan disimpan'); if (np) { toast('PIN diganti — silakan login ulang', 'warning'); setTimeout(logout, 1200); } } catch (e) {}
+      v.pillPosition = $('#g_pillPosition').value; v.pillSize = $('#g_pillSize').value;
+      v.pillMode = $('#g_pillMode').value; v.pillPeekEvery = $('#g_pillPeekEvery').value; v.pillOpacity = Number($('#g_pillOpacity').value) / 100;
+      ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout', 'bigCountdown'].forEach((k) => (v[k] = $('#g_' + k).checked));
+      try { await act('/api/config/settings', { value: v }, 'Pengaturan disimpan'); } catch (e) {}
     };
   }
   const COLS = {
@@ -858,10 +987,105 @@
     };
   }
 
+  // ================= Pengguna =================
+  async function loadUsers() {
+    try { S.usersData = await api('/api/users'); if (S.view === 'users') renderUsers(); } catch (e) { toast(e.message, 'danger'); }
+  }
+  function renderUsers() {
+    const d = S.usersData;
+    if (!d) { $('#content').innerHTML = '<div class="empty">Memuat…</div>'; return; }
+    const isOwner = S.me.role === 'owner';
+    const order = { owner: 0, admin: 1, kasir: 2 };
+    const list = d.users.slice().sort((a, b) => (order[a.role] - order[b.role]) || a.name.localeCompare(b.name));
+    const counts = { owner: 0, admin: 0, kasir: 0 }; list.forEach((x) => counts[x.role]++);
+    $('#content').innerHTML =
+      '<div class="stats" style="grid-template-columns:repeat(3,1fr)">' +
+      stat('Admin Utama', counts.owner, 'akses penuh ke semua fitur', 'rgba(245,197,24,.12)', 'key') +
+      stat('Admin', counts.admin, 'bisa kelola kasir & pengaturan', 'rgba(59,130,246,.14)', 'users') +
+      stat('Kasir / Karyawan', counts.kasir, 'operasional harian', 'rgba(34,197,94,.1)', 'user') + '</div>' +
+      '<div class="toolbar">' + (isOwner ? '<button class="btn" data-new="admin">' + ic('plus', 15) + 'Tambah Admin</button>' : '') +
+      '<button class="btn gold" data-new="kasir">' + ic('plus', 15) + 'Tambah Kasir / Karyawan</button>' +
+      (isOwner ? '<button class="btn ghost" data-new="owner">' + ic('plus', 15) + 'Tambah Admin Utama</button>' : '') + '</div>' +
+      (!isOwner ? '<div class="notice">Sebagai Admin, Anda hanya dapat menambah dan mengubah akun <b>Kasir / Karyawan</b>.</div>' : '') +
+      '<div class="card"><table class="t"><thead><tr><th>Pengguna</th><th>Peran</th><th>Hak akses</th><th>Login terakhir</th><th>Status</th><th></th></tr></thead><tbody>' +
+      list.map((x) => {
+        const manage = isOwner || x.role === 'kasir';
+        const n = Object.keys(x.perms).filter((k) => x.perms[k]).length;
+        return '<tr><td><div class="row"><span class="avatar ' + x.role + '">' + esc(initials(x.name)) + '</span><div><b>' + esc(x.name) + (x.id === S.me.id ? ' <span class="muted">(Anda)</span>' : '') + '</b><div class="muted" style="font-size:12px">@' + esc(x.username) + (x.createdBy ? ' · dibuat oleh ' + esc(x.createdBy) : '') + '</div></div></div></td>' +
+          '<td><span class="role ' + x.role + '">' + esc(x.roleLabel) + '</span></td>' +
+          '<td><span class="muted">' + (x.role === 'owner' ? 'Semua' : n + ' / ' + Object.keys(x.perms).length) + '</span></td>' +
+          '<td class="muted">' + (x.lastLogin ? dt(x.lastLogin) : 'belum pernah') + '</td>' +
+          '<td>' + (x.active ? '<span class="chip playing">aktif</span>' : '<span class="chip expired">nonaktif</span>') + '</td>' +
+          '<td class="r" style="white-space:nowrap">' + (manage ? '<button class="btn sm" data-e="' + esc(x.id) + '">' + ic('edit', 14) + 'Ubah</button>' + (x.id !== S.me.id ? ' <button class="btn sm red" data-del="' + esc(x.id) + '" title="Hapus">' + ic('trash', 14) + '</button>' : '') : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    $$('[data-new]').forEach((b) => (b.onclick = () => openUserEdit(null, b.dataset.new)));
+    $$('[data-e]').forEach((b) => (b.onclick = () => openUserEdit(d.users.find((x) => x.id === b.dataset.e))));
+    $$('[data-del]').forEach((b) => (b.onclick = async () => {
+      const x = d.users.find((y) => y.id === b.dataset.del);
+      if (!(await confirmBox('Hapus pengguna?', 'Akun <b>' + esc(x.name) + '</b> akan dihapus permanen. Riwayat transaksinya tetap tersimpan. Alternatif: nonaktifkan akun saja.', 'Hapus', 'red'))) return;
+      try { await act('/api/users/delete', { id: x.id }, 'Pengguna dihapus'); loadUsers(); } catch (e) {}
+    }));
+  }
+  function openUserEdit(user, newRole) {
+    const d = S.usersData; const isOwner = S.me.role === 'owner';
+    const isNew = !user;
+    let role = user ? user.role : newRole || 'kasir';
+    let perms = user ? Object.assign({}, user.perms) : Object.assign({}, d.roleDefaults[role]);
+    const roles = isOwner ? ['kasir', 'admin', 'owner'] : ['kasir'];
+    const m = modal((isNew ? 'Tambah ' : 'Ubah ') + esc(d.roleLabels[role] || 'Pengguna'),
+      '<div class="row"><div class="field" style="flex:1"><label class="f">Nama lengkap</label><input id="un" value="' + esc(user ? user.name : '') + '" placeholder="mis. Yohanes Kasir"></div>' +
+      '<div class="field" style="flex:1"><label class="f">Username</label><input id="uu" value="' + esc(user ? user.username : '') + '" placeholder="mis. yohanes"></div></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label class="f">Peran</label><select id="ur">' + roles.map((r) => '<option value="' + r + '" ' + (r === role ? 'selected' : '') + '>' + esc(d.roleLabels[r]) + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="flex:1"><label class="f">' + (isNew ? 'PIN login (4–8 angka)' : 'Reset PIN (kosongkan jika tetap)') + '</label><input type="password" id="up" inputmode="numeric" maxlength="8"></div></div>' +
+      (!isNew && user.id !== S.me.id ? '<label class="row" style="gap:10px;margin-bottom:14px"><span class="switch"><input type="checkbox" id="ua" ' + (user.active ? 'checked' : '') + '><span></span></span>Akun aktif (bisa login)</label>' : '') +
+      '<div class="spread"><h3 style="margin:6px 0 10px">Hak akses</h3><button class="btn sm ghost" id="udef">Kembalikan default peran</button></div><div class="perm-grid" id="upg"></div>',
+      '<button class="btn" data-x>Batal</button><button class="btn gold" id="us">' + ic('check', 15) + 'Simpan</button>', 'wide');
+    $('[data-x]', m).onclick = closeModal;
+    function drawPerms() {
+      $('#upg', m).innerHTML = Object.keys(d.permLabels).map((k) => {
+        const locked = role === 'owner' || (!isOwner && !S.me.perms[k]) || (role === 'kasir' && k === 'users');
+        const on = role === 'owner' ? true : !!perms[k] && !(role === 'kasir' && k === 'users');
+        return '<label class="perm ' + (locked ? 'dis' : '') + '"><span class="switch"><input type="checkbox" data-k="' + k + '" ' + (on ? 'checked' : '') + ' ' + (locked ? 'disabled' : '') + '><span></span></span>' + esc(d.permLabels[k]) + '</label>';
+      }).join('');
+      $$('#upg [data-k]', m).forEach((c) => (c.onchange = () => { perms[c.dataset.k] = c.checked; }));
+    }
+    drawPerms();
+    $('#ur', m).onchange = (e) => { role = e.target.value; perms = Object.assign({}, d.roleDefaults[role]); drawPerms(); };
+    $('#udef', m).onclick = () => { perms = Object.assign({}, d.roleDefaults[role]); drawPerms(); };
+    $('#us', m).onclick = async () => {
+      const body = { id: user ? user.id : undefined, name: $('#un', m).value, username: $('#uu', m).value, role, perms, pin: $('#up', m).value || undefined };
+      if ($('#ua', m)) body.active = $('#ua', m).checked; else if (user) body.active = user.active;
+      try { await act('/api/users/save', body, isNew ? 'Pengguna ditambahkan' : 'Perubahan disimpan'); closeModal(); loadUsers(); } catch (e) {}
+    };
+  }
+
+  // ================= Aktivitas =================
+  S.aud = { from: ymd(new Date()), to: ymd(new Date()), user: '', q: '' };
+  async function loadAudit() {
+    try {
+      S.audit = await api('/api/audit?from=' + S.aud.from + '&to=' + S.aud.to + (S.aud.user ? '&user=' + encodeURIComponent(S.aud.user) : ''));
+      if (!S.usersData && can('users')) { try { S.usersData = await api('/api/users'); } catch (e) {} }
+      if (S.view === 'audit') renderAudit();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+  function renderAudit() {
+    const items = S.audit ? S.audit.items.filter((a) => !S.aud.q || (a.action + ' ' + a.detail + ' ' + a.user).toLowerCase().indexOf(S.aud.q.toLowerCase()) >= 0) : null;
+    const users = S.usersData ? S.usersData.users : [];
+    $('#content').innerHTML = '<div class="toolbar"><input type="date" id="af" value="' + S.aud.from + '" style="width:auto"><span class="muted">s/d</span><input type="date" id="at" value="' + S.aud.to + '" style="width:auto">' +
+      (users.length ? '<select id="au" style="width:auto"><option value="">Semua pengguna</option>' + users.map((x) => '<option value="' + esc(x.id) + '" ' + (S.aud.user === x.id ? 'selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>' : '') +
+      '<input id="aq" placeholder="Cari aktivitas…" value="' + esc(S.aud.q) + '" style="max-width:260px"></div>' +
+      '<div class="card">' + (!items ? '<div class="empty">Memuat…</div>' : items.length ? '<table class="t"><thead><tr><th>Waktu</th><th>Pengguna</th><th>Aktivitas</th><th>Detail</th></tr></thead><tbody>' +
+        items.map((a) => '<tr><td class="mono muted" style="white-space:nowrap">' + dt(a.at) + '</td><td><span class="role ' + esc(a.role || 'kasir') + '">' + esc(a.user) + '</span></td><td><b>' + esc(a.action) + '</b></td><td class="muted">' + esc(a.detail) + '</td></tr>').join('') + '</tbody></table>'
+        : '<div class="empty"><div class="big">📋</div>Belum ada aktivitas pada periode ini</div>') + '</div>';
+    $('#af').onchange = (e) => { S.aud.from = e.target.value; loadAudit(); };
+    $('#at').onchange = (e) => { S.aud.to = e.target.value; loadAudit(); };
+    if ($('#au')) $('#au').onchange = (e) => { S.aud.user = e.target.value; loadAudit(); };
+    let qt; $('#aq').oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { S.aud.q = e.target.value; renderAudit(); $('#aq').focus(); $('#aq').setSelectionRange(99, 99); }, 250); };
+  }
+
   // ================= Mulai =================
   renderPin();
-  if (S.token) {
-    api('/api/state').then((snap) => { S.snap = snap; S.recvAt = Date.now(); boot(); }).catch(() => logout());
-  } else logout();
+  if (S.token) boot().then(() => { if (!S.me) logout(true); });
+  else logout(true);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

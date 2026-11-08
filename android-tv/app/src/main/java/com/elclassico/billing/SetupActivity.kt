@@ -122,11 +122,10 @@ class SetupActivity : Activity() {
         })
 
         right.addView(section("4. Izin & Sistem"))
+        right.addView(hint("Timer di pojok layar saat bermain butuh SALAH SATU izin di bawah. Jika menu overlay tidak ada di TV ini, pakai Aksesibilitas."))
+        right.addView(button("♿  Aktifkan Aksesibilitas El Classico (timer + matikan TV)") { openAccessibility() })
         right.addView(button("🪟  Izin Tampil di Atas Aplikasi (overlay)") { requestOverlay() })
         right.addView(button("⏻  Izin Matikan TV (Admin Perangkat)") { requestAdmin() })
-        right.addView(button("♿  Izin Matikan TV via Aksesibilitas (alternatif)") {
-            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) { toast("Menu aksesibilitas tidak tersedia") }
-        })
         right.addView(button("🧪  Tes Matikan TV (nyalakan lagi dengan remote)") {
             if (PowerControl.powerOff(this) == null) toast("Belum ada izin Matikan TV yang aktif")
         })
@@ -152,7 +151,8 @@ class SetupActivity : Activity() {
     private fun refreshStatus() {
         if (!::status.isInitialized) return
         val ov = TvControl.canOverlay(this)
-        status.text = "Overlay timer: " + (if (ov) "✅ diizinkan" else "❌ belum — timer tidak tampil di atas PS") +
+        val acc = PowerAccessibility.instance != null
+        status.text = "Timer di atas game: " + (if (ov) "✅ izin overlay aktif" else if (acc) "✅ lewat aksesibilitas" else "❌ belum — hanya notifikasi singkat. Aktifkan Aksesibilitas!") +
                 "\nMatikan TV: " + (if (PowerControl.adminActive(this)) "✅ admin perangkat aktif"
                     else if (PowerControl.accessibilityActive()) "✅ aksesibilitas aktif"
                     else "❌ belum — hanya bisa menghitamkan layar") +
@@ -176,13 +176,21 @@ class SetupActivity : Activity() {
         finish()
     }
 
+    private fun openAccessibility() {
+        toast("Pilih \"El Classico Billing\" lalu aktifkan (On). Tekan BACK untuk kembali.")
+        try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) {
+            status.text = "Menu aksesibilitas tidak bisa dibuka otomatis.\nBuka manual: Pengaturan TV › Preferensi Perangkat › Aksesibilitas › El Classico Billing › Aktifkan.\n" +
+                    "Atau lewat komputer (ADB):\nadb shell settings put secure enabled_accessibility_services $packageName/.PowerAccessibility\nadb shell settings put secure accessibility_enabled 1"
+        }
+    }
+
     private fun requestOverlay() {
         if (Build.VERSION.SDK_INT < 23) { toast("Sudah diizinkan"); return }
         try {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         } catch (_: ActivityNotFoundException) {
             try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) } catch (_: Exception) {
-                status.text = "TV ini tidak punya menu izin overlay.\nAktifkan lewat komputer (ADB):\nadb shell appops set $packageName SYSTEM_ALERT_WINDOW allow"
+                status.text = "TV ini tidak punya menu izin overlay — pakai tombol Aksesibilitas di atas.\nAtau lewat komputer (ADB):\nadb shell appops set $packageName SYSTEM_ALERT_WINDOW allow"
             }
         }
     }

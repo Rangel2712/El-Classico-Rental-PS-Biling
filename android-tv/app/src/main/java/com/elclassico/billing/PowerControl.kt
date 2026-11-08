@@ -16,10 +16,18 @@ class AdminReceiver : DeviceAdminReceiver()
 class PowerAccessibility : AccessibilityService() {
     companion object { @Volatile var instance: PowerAccessibility? = null }
 
-    override fun onServiceConnected() { instance = this }
+    override fun onServiceConnected() {
+        instance = this
+        // Aksesibilitas aktif → timer bisa tampil di atas game tanpa izin overlay
+        BillingService.instance?.overlayChanged()
+    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
     override fun onInterrupt() { }
-    override fun onUnbind(intent: Intent?): Boolean { instance = null; return super.onUnbind(intent) }
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        BillingService.instance?.overlayChanged()
+        return super.onUnbind(intent)
+    }
 
     fun sleep(): Boolean =
         if (Build.VERSION.SDK_INT >= 28) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) else false

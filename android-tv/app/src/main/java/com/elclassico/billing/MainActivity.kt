@@ -33,6 +33,8 @@ class MainActivity : Activity(), Bus.Listener {
     private val main = Handler(Looper.getMainLooper())
     private var okPresses = 0
     private var okFirst = 0L
+    private var backPresses = 0
+    private var backFirst = 0L
 
     @Suppress("DEPRECATION")
     @SuppressLint("SetJavaScriptEnabled")
@@ -139,6 +141,8 @@ class MainActivity : Activity(), Bus.Listener {
             }
         }
         @JavascriptInterface fun openSetup() { main.post { askPin() } }
+        @JavascriptInterface fun getOverlayMode(): String = BillingService.instance?.overlayMode() ?: "toast"
+        @JavascriptInterface fun isConfigured(): Boolean = Prefs.configured(this@MainActivity)
     }
 
     // ---------------------------------------------------------------- tombol remote
@@ -152,16 +156,27 @@ class MainActivity : Activity(), Bus.Listener {
             web.evaluateJavascript("window.ec&&ec.push(" + JSONObject.quote("{\"t\":\"cmd\",\"cmd\":\"unblack\"}") + ")", null)
             return true
         }
+        // Menu teknisi (pakai remote):
+        //  • tekan OK 7× cepat   • tahan OK ±2 detik   • tekan BACK 5× cepat   • tahan MENU
         if (event.action == KeyEvent.ACTION_DOWN) {
-            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                val now = System.currentTimeMillis()
-                if (now - okFirst > 4000) { okFirst = now; okPresses = 0 }
-                okPresses++
-                if (okPresses >= 7) { okPresses = 0; askPin() }
+            val now = System.currentTimeMillis()
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_BUTTON_A) {
+                if (event.repeatCount == 0) {
+                    if (now - okFirst > 4000) { okFirst = now; okPresses = 0 }
+                    okPresses++
+                    if (okPresses >= 7) { okPresses = 0; askPin() }
+                } else if (event.repeatCount == 20) askPin()
                 return true
             }
-            if (code == KeyEvent.KEYCODE_MENU && event.repeatCount >= 3) { askPin(); return true }
-            if (code == KeyEvent.KEYCODE_BACK) return true
+            if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
+                if (event.repeatCount == 0) {
+                    if (now - backFirst > 3000) { backFirst = now; backPresses = 0 }
+                    backPresses++
+                    if (backPresses >= 5) { backPresses = 0; askPin() }
+                }
+                return true
+            }
+            if ((code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_SETTINGS) && event.repeatCount >= 3) { askPin(); return true }
         }
         // Volume tetap boleh dipakai pelanggan
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE) {

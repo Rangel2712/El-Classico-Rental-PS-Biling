@@ -13,7 +13,7 @@ const dgram = require('dgram');
 const url = require('url');
 const WS = require('./lib/ws');
 
-const VERSION = '1.1.0';
+const VERSION = '1.4.0';
 const DISCOVERY_PORT = 41234;
 
 // ---------- Default data ----------
@@ -26,7 +26,6 @@ function defaultDB() {
       tagline: 'Main Puas, Harga Pas',
       address: 'Manokwari, Papua Barat',
       phone: '',
-      pin: '1234',
       warningSeconds: 60,
       rounding: 500,
       lockOnPause: true,
@@ -36,6 +35,12 @@ function defaultDB() {
       openBillingBlock: 1, // menit pembulatan untuk mode Main Bebas
       autoOffAfterCheckout: false, // matikan TV otomatis setelah pembayaran
       idleOffMinutes: 0,           // matikan TV kosong setelah N menit (0 = nonaktif)
+      pillPosition: 'tr',          // posisi timer di TV: tr, tl, br, bl
+      pillSize: 'm',               // ukuran timer: s, m, l
+      bigCountdown: false,         // hitung mundur besar di tengah saat sisa waktu <= warningSeconds
+      pillOpacity: 0.55,           // transparansi timer (0.2–1) agar tidak mengganggu permainan
+      pillMode: 'always',          // always | peek (muncul sebentar tiap N menit) | last5 (hanya 5 menit terakhir)
+      pillPeekEvery: 10,           // menit, untuk mode peek
     },
     types: [
       { id: 'ps3', name: 'PlayStation 3', ratePerHour: 5000, ratePerHalfHour: 3000, color: '#3b82f6' },
@@ -66,11 +71,37 @@ function defaultDB() {
       { id: 'm8', name: 'Kentang Goreng', category: 'Snack', price: 10000, emoji: '🍟', active: true, stock: null },
       { id: 'm9', name: 'Sewa Stik Tambahan', category: 'Lainnya', price: 3000, emoji: '🎮', active: true, stock: null },
     ],
+    users: [],          // pengguna panel (Admin Utama, Admin, Kasir)
+    tokens: {},         // token login -> { userId, at }
+    audit: [],          // log aktivitas
     sessions: {},       // unitId -> session
     transactions: [],   // transaksi selesai
     counters: { trx: 0 },
   };
 }
+
+// ---------- Hak akses ----------
+const PERMS = {
+  session: 'Sewa: mulai, tambah waktu, jeda, stop, pindah & bayar',
+  fnb: 'Kasir F&B & menambah pesanan',
+  tvControl: 'Kontrol TV (volume, HDMI, hidup/mati, pesan)',
+  discount: 'Memberi diskon',
+  reduceTime: 'Mengurangi waktu sewa',
+  cancelOrder: 'Membatalkan pesanan',
+  report: 'Melihat semua laporan & ekspor Excel',
+  deleteTrx: 'Menghapus transaksi',
+  settings: 'Ubah pengaturan, tarif, paket, unit TV & menu',
+  users: 'Kelola pengguna (admin hanya bisa kelola kasir)',
+  audit: 'Melihat log aktivitas',
+  backup: 'Cadangan & pulihkan data',
+};
+const ROLE_LABEL = { owner: 'Admin Utama', admin: 'Admin', kasir: 'Kasir / Karyawan' };
+const ROLE_DEFAULTS = {
+  owner: Object.keys(PERMS).reduce((a, k) => (a[k] = true, a), {}),
+  admin: Object.keys(PERMS).reduce((a, k) => (a[k] = k !== 'backup', a), {}),
+  kasir: { session: true, fnb: true, tvControl: true },
+};
+function hashPin(pin, salt) { return crypto.scryptSync(String(pin), String(salt), 32).toString('hex'); }
 
 // ---------- Utils ----------
 const uid = (p) => (p || '') + crypto.randomBytes(5).toString('hex');
@@ -116,18 +147,32 @@ function start(opts) {
   const log = opts.log || ((...a) => console.log('[ElClassico]', ...a));
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  let db;
-  try {
-    db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  function normalize(d0) {
     const d = defaultDB();
-    db.settings = Object.assign({}, d.settings, db.settings || {});
-    ['types', 'packages', 'units', 'menu', 'transactions'].forEach((k) => { if (!Array.isArray(db[k])) db[k] = d[k]; });
-    db.sessions = db.sessions || {};
-    db.counters = db.counters || { trx: 0 };
-    db.secret = db.secret || d.secret;
-  } catch (e) {
-    db = defaultDB();
+    const x = d0 && typeof d0 === 'object' ? d0 : d;
+    const oldPin = x.settings && x.settings.pin;
+    x.settings = Object.assign({}, d.settings, x.settings || {});
+    delete x.settings.pin;
+    ['types', 'packages', 'units', 'menu', 'transactions'].forEach((k) => { if (!Array.isArray(x[k])) x[k] = d[k]; });
+    x.sessions = x.sessions || {};
+    x.counters = x.counters || { trx: 0 };
+    x.secret = x.secret || d.secret;
+    x.users = Array.isArray(x.users) ? x.users : [];
+    x.tokens = x.tokens && typeof x.tokens === 'object' ? x.tokens : {};
+    x.audit = Array.isArray(x.audit) ? x.audit : [];
+    if (!x.users.some((u) => u.role === 'owner' && u.active !== false)) {
+      // Migrasi: PIN lama menjadi PIN Admin Utama
+      const salt = crypto.randomBytes(8).toString('hex');
+      x.users.unshift({
+        id: 'owner', name: 'Admin Utama', username: 'admin', role: 'owner', perms: ROLE_DEFAULTS.owner,
+        salt, pinHash: hashPin(oldPin || '1234', salt), active: true, createdAt: Date.now(), lastLogin: null,
+      });
+    }
+    return x;
   }
+  let db;
+  try { db = normalize(JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))); }
+  catch (e) { db = normalize(null); }
 
   let saveTimer = null;
   function save(immediate) {
@@ -155,7 +200,34 @@ function start(opts) {
   backup();
   setInterval(backup, 3600 * 1000);
 
-  const tokenFor = (pin) => crypto.createHmac('sha256', db.secret).update(String(pin)).digest('hex').slice(0, 40);
+  // ---------- Pengguna & sesi login ----------
+  const userById = (id) => db.users.find((x) => x.id === id);
+  const can = (user, perm) => !!user && (user.role === 'owner' || !!(user.perms || {})[perm]);
+  function effectivePerms(user) {
+    const o = {}; Object.keys(PERMS).forEach((k) => (o[k] = can(user, k))); return o;
+  }
+  function publicUser(x) {
+    return { id: x.id, name: x.name, username: x.username, role: x.role, roleLabel: ROLE_LABEL[x.role] || x.role,
+      perms: effectivePerms(x), active: x.active !== false, createdAt: x.createdAt, lastLogin: x.lastLogin || null, createdBy: x.createdBy || null };
+  }
+  function userFromToken(t) {
+    if (!t) return null;
+    const rec = db.tokens[t]; if (!rec) return null;
+    const user = userById(rec.userId);
+    if (!user || user.active === false) return null;
+    return user;
+  }
+  function revokeTokens(userId, exceptToken) {
+    Object.keys(db.tokens).forEach((t) => { if (db.tokens[t].userId === userId && t !== exceptToken) delete db.tokens[t]; });
+    adminConns.forEach((c) => { if (c.user && c.user.id === userId && c.token !== exceptToken) { c.send({ t: 'auth', error: 'Sesi diakhiri' }); c.close(); } });
+  }
+  function audit(user, action, detail) {
+    db.audit.push({ at: Date.now(), userId: user ? user.id : null, user: user ? user.name : 'Sistem', role: user ? user.role : '', action, detail: detail || '' });
+    if (db.audit.length > 8000) db.audit.splice(0, db.audit.length - 8000);
+  }
+  // Bersihkan token lama (> 60 hari)
+  Object.keys(db.tokens).forEach((t) => { if (Date.now() - (db.tokens[t].at || 0) > 60 * 86400000) delete db.tokens[t]; });
+  const loginFails = {}; // userId -> { n, until }
 
   // ---------- Live state ----------
   const tvConns = new Map();     // unitId -> Set(conn)
@@ -211,7 +283,7 @@ function start(opts) {
       elapsedMs: elapsedMs(s, t), remainingMs: remainingMs(s, t),
       ratePerHour: s.ratePerHour, ratePerHalfHour: s.ratePerHalfHour, charges: s.charges || [],
       orders: s.orders || [], rentalCost: rentalCost(s, t), ordersTotal: ordersTotal(s),
-      total: rentalCost(s, t) + ordersTotal(s), note: s.note || '',
+      total: rentalCost(s, t) + ordersTotal(s), note: s.note || '', startedBy: s.startedBy || '',
       log: (s.log || []).slice(-30),
     };
   }
@@ -241,6 +313,8 @@ function start(opts) {
       config: {
         warningSeconds: db.settings.warningSeconds, lockOnPause: db.settings.lockOnPause,
         autoHdmi: db.settings.autoHdmi, showTimerPill: db.settings.showTimerPill,
+        pillPosition: db.settings.pillPosition, pillSize: db.settings.pillSize, bigCountdown: db.settings.bigCountdown,
+        pillOpacity: db.settings.pillOpacity, pillMode: db.settings.pillMode, pillPeekEvery: db.settings.pillPeekEvery,
       },
       unit: unit ? { id: unit.id, name: unit.name, type: unit.type, typeName: typeById(unit.type).name } : { id: unitId, name: unitId, unknown: true },
       session: sv ? {
@@ -272,9 +346,10 @@ function start(opts) {
     if (unitId) pushTV(unitId); else db.units.forEach((u) => pushTV(u.id));
     pushAdmins();
   }
+  let actor = null; // pengguna yang sedang menjalankan aksi (untuk catatan sesi)
   function addLog(s, text) {
     s.log = s.log || [];
-    s.log.push({ at: now(), text });
+    s.log.push({ at: now(), text, by: actor ? actor.name : '' });
   }
 
   // ---------- Wake-on-LAN ----------
@@ -300,7 +375,7 @@ function start(opts) {
 
   // ---------- Aksi sesi ----------
   const actions = {
-    start(b) {
+    start(b, user) {
       const unit = unitById(b.unitId);
       if (!unit) throw new Error('Unit tidak ditemukan');
       if (db.sessions[unit.id]) throw new Error(unit.name + ' sedang dipakai');
@@ -309,6 +384,7 @@ function start(opts) {
       const s = {
         id: uid('S'), unitId: unit.id, mode, customer: (b.customer || '').slice(0, 40),
         startedAt: now(), pausedMs: 0, pauseStartedAt: null, expired: false, warned: false,
+        startedBy: user ? user.name : '', startedById: user ? user.id : null,
         durationMs: 0, ratePerHour: type.ratePerHour, ratePerHalfHour: type.ratePerHalfHour || 0, charges: [], orders: [], log: [], note: b.note || '',
       };
       if (mode === 'timer') {
@@ -327,7 +403,7 @@ function start(opts) {
       changed(unit.id);
       return sessionView(s);
     },
-    extend(b) {
+    extend(b, user) {
       const s = db.sessions[b.unitId]; const unit = unitById(b.unitId);
       if (!s || !unit) throw new Error('Tidak ada sesi aktif');
       if (s.mode !== 'timer') throw new Error('Mode Main Bebas tidak perlu tambah waktu');
@@ -348,7 +424,7 @@ function start(opts) {
       changed(unit.id);
       return sessionView(s);
     },
-    pause(b) {
+    pause(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
       if (s.expired) throw new Error('Waktu sudah habis');
@@ -356,7 +432,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    resume(b) {
+    resume(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
       if (s.expired) throw new Error('Waktu habis — tambah waktu dahulu');
@@ -364,7 +440,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    stop(b) {
+    stop(b, user) {
       // Hentikan permainan (kunci TV) tetapi belum dibayar
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
@@ -378,7 +454,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    checkout(b) {
+    checkout(b, user) {
       const s = db.sessions[b.unitId]; const unit = unitById(b.unitId);
       if (!s || !unit) throw new Error('Tidak ada sesi aktif');
       const t = now();
@@ -393,6 +469,7 @@ function start(opts) {
         charges: s.charges, orders: s.orders, rentalCost: rent, ordersTotal: ord, discount, total,
         paid: Number(b.paid) || total, change: Math.max(0, (Number(b.paid) || total) - total),
         method: b.method || 'Tunai', note: b.note || '',
+        cashierId: user ? user.id : null, cashierName: user ? user.name : '', startedBy: s.startedBy || '',
       };
       db.transactions.push(trx);
       delete db.sessions[unit.id];
@@ -404,7 +481,7 @@ function start(opts) {
       save(true);
       return trx;
     },
-    move(b) {
+    move(b, user) {
       const s = db.sessions[b.unitId]; const to = unitById(b.toUnitId);
       if (!s) throw new Error('Tidak ada sesi aktif');
       if (!to) throw new Error('Unit tujuan tidak ada');
@@ -417,7 +494,7 @@ function start(opts) {
       changed(b.unitId); changed(to.id);
       return sessionView(s);
     },
-    note(b) {
+    note(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
       if (b.customer != null) s.customer = String(b.customer).slice(0, 40);
@@ -425,7 +502,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    orderAdd(b) {
+    orderAdd(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif di unit ini');
       const items = Array.isArray(b.items) ? b.items : [{ itemId: b.itemId, qty: b.qty }];
@@ -445,7 +522,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    orderStatus(b) {
+    orderStatus(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
       const o = s.orders.find((x) => x.id === b.orderId);
@@ -455,7 +532,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    orderRemove(b) {
+    orderRemove(b, user) {
       const s = db.sessions[b.unitId];
       if (!s) throw new Error('Tidak ada sesi aktif');
       const i = s.orders.findIndex((x) => x.id === b.orderId);
@@ -468,7 +545,7 @@ function start(opts) {
       changed(b.unitId);
       return sessionView(s);
     },
-    sale(b) {
+    sale(b, user) {
       // Penjualan F&B tanpa sesi (walk-in)
       const items = (b.items || []).map((it) => {
         const m = db.menu.find((x) => x.id === it.itemId);
@@ -489,6 +566,7 @@ function start(opts) {
         startedAt: t, endedAt: t, playedMs: 0, charges: [], orders: items, rentalCost: 0, ordersTotal: ord,
         discount, total, paid: Number(b.paid) || total, change: Math.max(0, (Number(b.paid) || total) - total),
         method: b.method || 'Tunai',
+        cashierId: user ? user.id : null, cashierName: user ? user.name : '',
       };
       db.transactions.push(trx);
       changed();
@@ -498,7 +576,7 @@ function start(opts) {
   };
 
   // ---------- Perintah ke TV ----------
-  const TV_CMDS = ['powerOff', 'volume', 'volumeUp', 'volumeDown', 'mute', 'settings', 'hdmi', 'home', 'lock', 'toast', 'message', 'wake', 'reload', 'beep', 'wifiSettings', 'inputs', 'unlock'];
+  const TV_CMDS = ['powerOff', 'setup', 'setHdmi', 'setOpenOnWake', 'volume', 'volumeUp', 'volumeDown', 'mute', 'settings', 'hdmi', 'home', 'lock', 'toast', 'message', 'wake', 'reload', 'beep', 'wifiSettings', 'inputs', 'unlock'];
   async function tvCommand(b) {
     const unit = unitById(b.unitId);
     if (b.unitId !== '*' && !unit) throw new Error('Unit tidak ditemukan');
@@ -553,11 +631,12 @@ function start(opts) {
       const s = Object.assign({}, db.settings);
       ['name', 'tagline', 'address', 'phone', 'receiptFooter'].forEach((k) => { if (value[k] != null) s[k] = String(value[k]).slice(0, 120); });
       ['warningSeconds', 'rounding', 'openBillingBlock', 'idleOffMinutes'].forEach((k) => { if (value[k] != null) s[k] = clamp(Number(value[k]) || 0, 0, 100000); });
-      ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout'].forEach((k) => { if (value[k] != null) s[k] = !!value[k]; });
-      if (value.newPin) {
-        if (!/^\d{4,8}$/.test(String(value.newPin))) throw new Error('PIN harus 4–8 digit angka');
-        s.pin = String(value.newPin);
-      }
+      ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout', 'bigCountdown'].forEach((k) => { if (value[k] != null) s[k] = !!value[k]; });
+      if (['tr', 'tl', 'br', 'bl'].indexOf(value.pillPosition) >= 0) s.pillPosition = value.pillPosition;
+      if (['s', 'm', 'l'].indexOf(value.pillSize) >= 0) s.pillSize = value.pillSize;
+      if (value.pillOpacity != null) s.pillOpacity = clamp(Number(value.pillOpacity) || 0.55, 0.2, 1);
+      if (['always', 'peek', 'last5'].indexOf(value.pillMode) >= 0) s.pillMode = value.pillMode;
+      if (value.pillPeekEvery != null) s.pillPeekEvery = clamp(Math.round(Number(value.pillPeekEvery) || 10), 1, 60);
       s.warningSeconds = clamp(s.warningSeconds || 60, 10, 600);
       db.settings = s;
     } else if (['types', 'packages', 'units', 'menu'].indexOf(key) >= 0) {
@@ -587,7 +666,14 @@ function start(opts) {
   function report(q) {
     const from = q.from ? new Date(q.from + 'T00:00:00').getTime() : new Date(new Date().toDateString()).getTime();
     const to = q.to ? new Date(q.to + 'T23:59:59.999').getTime() : from + 86400000 - 1;
-    const list = db.transactions.filter((x) => x.endedAt >= from && x.endedAt <= to);
+    const list = db.transactions.filter((x) => x.endedAt >= from && x.endedAt <= to && (!q.cashier || x.cashierId === q.cashier));
+    const byCashier = {}, byMethod = {};
+    list.forEach((x) => {
+      const k = x.cashierName || '(tanpa nama)';
+      byCashier[k] = byCashier[k] || { name: k, count: 0, total: 0, rental: 0, fnb: 0 };
+      byCashier[k].count++; byCashier[k].total += x.total; byCashier[k].rental += x.rentalCost || 0; byCashier[k].fnb += x.ordersTotal || 0;
+      byMethod[x.method || 'Tunai'] = (byMethod[x.method || 'Tunai'] || 0) + x.total;
+    });
     const sum = (f) => list.reduce((a, x) => a + (f(x) || 0), 0);
     const byUnit = {}, byItem = {}, byHour = Array(24).fill(0), byDay = {};
     list.forEach((x) => {
@@ -609,15 +695,16 @@ function start(opts) {
       byUnit: Object.values(byUnit).sort((a, b) => b.total - a.total),
       byItem: Object.values(byItem).sort((a, b) => b.qty - a.qty),
       byHour, byDay,
+      byCashier: Object.values(byCashier).sort((a, b) => b.total - a.total), byMethod,
       transactions: list.slice().reverse(),
     };
   }
   function csv(q) {
     const r = report(q);
-    const rows = [['ID', 'Waktu Selesai', 'Jenis', 'Unit', 'Tipe', 'Pelanggan', 'Durasi (menit)', 'Sewa', 'F&B', 'Diskon', 'Total', 'Metode']];
+    const rows = [['ID', 'Waktu Selesai', 'Jenis', 'Unit', 'Tipe', 'Pelanggan', 'Durasi (menit)', 'Sewa', 'F&B', 'Diskon', 'Total', 'Metode', 'Kasir']];
     r.transactions.slice().reverse().forEach((x) => rows.push([
       x.id, new Date(x.endedAt).toLocaleString('id-ID'), x.kind === 'fnb' ? 'F&B' : 'Rental', x.unitName, x.typeName,
-      x.customer || '', Math.round((x.playedMs || 0) / 60000), x.rentalCost, x.ordersTotal, x.discount || 0, x.total, x.method,
+      x.customer || '', Math.round((x.playedMs || 0) / 60000), x.rentalCost, x.ordersTotal, x.discount || 0, x.total, x.method, x.cashierName || '',
     ]));
     return '﻿' + rows.map((r) => r.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
   }
@@ -669,6 +756,61 @@ function start(opts) {
   setInterval(() => { pushAdmins(); db.units.forEach((u) => pushTV(u.id)); }, 10000);
   setInterval(() => { adminConns.forEach((c) => c.ping()); tvConns.forEach((set) => set.forEach((c) => c.ping())); }, 20000);
 
+  // ---------- Kelola pengguna ----------
+  const validPin = (pin) => /^\d{4,8}$/.test(String(pin || ''));
+  function canManage(actor, target, newRole) {
+    if (actor.role === 'owner') return true;
+    if (!can(actor, 'users')) return false;
+    // Admin hanya boleh mengelola kasir
+    return (!target || target.role === 'kasir') && (!newRole || newRole === 'kasir');
+  }
+  function activeOwners(exceptId) { return db.users.filter((x) => x.role === 'owner' && x.active !== false && x.id !== exceptId).length; }
+  function saveUser(actor, b) {
+    const isNew = !b.id;
+    const target = isNew ? null : userById(b.id);
+    if (!isNew && !target) throw new Error('Pengguna tidak ditemukan');
+    const role = ['owner', 'admin', 'kasir'].indexOf(b.role) >= 0 ? b.role : (target ? target.role : 'kasir');
+    if (!canManage(actor, target, role)) throw new Error('Anda tidak berhak mengelola pengguna ini');
+    const name = String(b.name || '').trim().slice(0, 40);
+    const username = String(b.username || '').trim().toLowerCase();
+    if (!name) throw new Error('Nama wajib diisi');
+    if (!/^[a-z0-9._-]{3,20}$/.test(username)) throw new Error('Username 3–20 karakter (huruf kecil, angka, . _ -)');
+    if (db.users.some((x) => x.username === username && x.id !== b.id)) throw new Error('Username sudah dipakai');
+    if (isNew && !validPin(b.pin)) throw new Error('PIN harus 4–8 digit angka');
+    if (b.pin && !validPin(b.pin)) throw new Error('PIN harus 4–8 digit angka');
+    const active = b.active !== false;
+    if (target && target.id === actor.id && !active) throw new Error('Tidak bisa menonaktifkan akun sendiri');
+    if (target && target.role === 'owner' && (role !== 'owner' || !active) && activeOwners(target.id) === 0) throw new Error('Harus ada minimal satu Admin Utama aktif');
+    // Izin: owner semua; selain itu dari input, dibatasi izin milik pembuat
+    let perms = {};
+    if (role === 'owner') perms = Object.assign({}, ROLE_DEFAULTS.owner);
+    else Object.keys(PERMS).forEach((k) => {
+      const want = b.perms && b.perms[k] != null ? !!b.perms[k] : !!ROLE_DEFAULTS[role][k];
+      perms[k] = want && (actor.role === 'owner' || can(actor, k));
+    });
+    if (role === 'kasir') perms.users = false;
+    const u = target || { id: uid('U'), createdAt: now(), createdBy: actor.name, lastLogin: null };
+    Object.assign(u, { name, username, role, perms, active });
+    if (b.pin) { u.salt = crypto.randomBytes(8).toString('hex'); u.pinHash = hashPin(b.pin, u.salt); }
+    if (isNew) db.users.push(u);
+    if (!active || (b.pin && target)) revokeTokens(u.id, actor.id === u.id ? actor._token : null);
+    audit(actor, isNew ? 'Tambah pengguna' : 'Ubah pengguna', name + ' (' + (ROLE_LABEL[role] || role) + ')' + (b.pin && target ? ' · PIN direset' : '') + (!active ? ' · dinonaktifkan' : ''));
+    save(); pushAdmins();
+    return publicUser(u);
+  }
+  function deleteUser(actor, id) {
+    const target = userById(id);
+    if (!target) throw new Error('Pengguna tidak ditemukan');
+    if (target.id === actor.id) throw new Error('Tidak bisa menghapus akun sendiri');
+    if (!canManage(actor, target)) throw new Error('Anda tidak berhak menghapus pengguna ini');
+    if (target.role === 'owner' && activeOwners(target.id) === 0) throw new Error('Harus ada minimal satu Admin Utama aktif');
+    revokeTokens(target.id);
+    db.users = db.users.filter((x) => x.id !== id);
+    audit(actor, 'Hapus pengguna', target.name + ' (' + (ROLE_LABEL[target.role] || target.role) + ')');
+    save();
+    return { ok: true };
+  }
+
   // ---------- HTTP ----------
   const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg', '.woff2': 'font/woff2' };
   function sendJSON(res, code, obj) {
@@ -691,7 +833,11 @@ function start(opts) {
       res.end(data);
     });
   }
-  const authed = (req) => (req.headers['x-token'] || '') === tokenFor(db.settings.pin);
+  const forbid = (msg) => { const e = new Error(msg || 'Akses ditolak: Anda tidak punya izin untuk tindakan ini'); e.code = 403; return e; };
+  const need = (user, perm) => { if (!can(user, perm)) throw forbid(); };
+  const ACTION_PERM = { start: 'session', extend: 'session', pause: 'session', resume: 'session', stop: 'session', checkout: 'session', move: 'session', note: 'session', orderAdd: 'fnb', orderStatus: 'fnb', orderRemove: 'cancelOrder', sale: 'fnb' };
+  const ACTION_LABEL = { start: 'Mulai sewa', extend: 'Ubah waktu', pause: 'Jeda', resume: 'Lanjutkan', stop: 'Hentikan sewa', checkout: 'Pembayaran', move: 'Pindah unit', note: 'Ubah data pelanggan', orderAdd: 'Tambah pesanan', orderStatus: 'Status pesanan', orderRemove: 'Batalkan pesanan', sale: 'Penjualan F&B' };
+  const unitName = (id) => (unitById(id) || { name: id || '-' }).name;
 
   const server = http.createServer(async (req, res) => {
     const u = url.parse(req.url, true);
@@ -702,39 +848,128 @@ function start(opts) {
     }
     try {
       if (p === '/api/ping') return sendJSON(res, 200, { app: 'elclassico', name: db.settings.name, version: VERSION });
+      if (p === '/api/users/public') {
+        return sendJSON(res, 200, { name: db.settings.name, users: db.users.filter((x) => x.active !== false).map((x) => ({ id: x.id, name: x.name, role: x.role, roleLabel: ROLE_LABEL[x.role] })) });
+      }
       if (p === '/api/login' && req.method === 'POST') {
         const b = await readBody(req);
-        if (String(b.pin) === String(db.settings.pin)) return sendJSON(res, 200, { token: tokenFor(db.settings.pin) });
-        return sendJSON(res, 401, { error: 'PIN salah' });
+        const user = db.users.find((x) => x.active !== false && (x.id === b.userId || (b.username && x.username === String(b.username).toLowerCase().trim())));
+        if (!user) return sendJSON(res, 401, { error: 'Pengguna tidak ditemukan' });
+        const f = loginFails[user.id] || { n: 0, until: 0 };
+        if (f.until > now()) return sendJSON(res, 429, { error: 'Terlalu banyak percobaan. Coba lagi dalam ' + Math.ceil((f.until - now()) / 1000) + ' detik' });
+        if (hashPin(b.pin, user.salt) !== user.pinHash) {
+          f.n++; if (f.n >= 5) { f.until = now() + 60000; f.n = 0; }
+          loginFails[user.id] = f;
+          audit(user, 'Login gagal', 'PIN salah'); save();
+          return sendJSON(res, 401, { error: 'PIN salah' });
+        }
+        delete loginFails[user.id];
+        const token = crypto.randomBytes(24).toString('hex');
+        db.tokens[token] = { userId: user.id, at: now() };
+        user.lastLogin = now();
+        audit(user, 'Login', ''); save();
+        return sendJSON(res, 200, { token, user: publicUser(user) });
       }
       if (p.startsWith('/api/')) {
-        if (!authed(req) && !(p === '/api/export.csv' && u.query.token === tokenFor(db.settings.pin))) return sendJSON(res, 401, { error: 'Belum login' });
+        const token = req.headers['x-token'] || u.query.token || '';
+        const user = userFromToken(token);
+        if (!user) return sendJSON(res, 401, { error: 'Belum login' });
+        user._token = token;
+        if (p === '/api/me') return sendJSON(res, 200, { user: publicUser(user), permLabels: PERMS });
         if (p === '/api/state') return sendJSON(res, 200, snapshot());
-        if (p === '/api/report') return sendJSON(res, 200, report(u.query));
-        if (p === '/api/export.csv') {
+        if (p === '/api/report' || p === '/api/export.csv') {
+          const q = Object.assign({}, u.query);
+          if (!can(user, 'report')) q.cashier = user.id; // kasir hanya melihat transaksinya sendiri
+          if (p === '/api/report') return sendJSON(res, 200, Object.assign(report(q), { limited: !can(user, 'report') }));
           res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="elclassico-laporan.csv"' });
-          return res.end(csv(u.query));
+          return res.end(csv(q));
+        }
+        if (p === '/api/users') {
+          need(user, 'users');
+          return sendJSON(res, 200, { users: db.users.map(publicUser), permLabels: PERMS, roleDefaults: ROLE_DEFAULTS, roleLabels: ROLE_LABEL });
+        }
+        if (p === '/api/audit') {
+          need(user, 'audit');
+          const from = u.query.from ? new Date(u.query.from + 'T00:00:00').getTime() : 0;
+          const to = u.query.to ? new Date(u.query.to + 'T23:59:59.999').getTime() : Infinity;
+          const list = db.audit.filter((a) => a.at >= from && a.at <= to && (!u.query.user || a.userId === u.query.user));
+          return sendJSON(res, 200, { items: list.slice(-1500).reverse() });
         }
         if (p === '/api/backup') {
+          need(user, 'backup');
+          audit(user, 'Unduh cadangan', ''); save();
+          const copy = Object.assign({}, db, { tokens: {} });
           res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="elclassico-backup.json"' });
-          return res.end(JSON.stringify(db));
+          return res.end(JSON.stringify(copy));
         }
         if (req.method !== 'POST') return sendJSON(res, 405, { error: 'Metode salah' });
         const b = await readBody(req);
+        if (p === '/api/logout') { delete db.tokens[token]; audit(user, 'Logout', ''); save(); return sendJSON(res, 200, { ok: true }); }
+        if (p === '/api/me/update') {
+          if (b.name) user.name = String(b.name).trim().slice(0, 40) || user.name;
+          if (b.newPin) {
+            if (hashPin(b.oldPin, user.salt) !== user.pinHash) throw new Error('PIN lama salah');
+            if (!validPin(b.newPin)) throw new Error('PIN harus 4–8 digit angka');
+            user.salt = crypto.randomBytes(8).toString('hex'); user.pinHash = hashPin(b.newPin, user.salt);
+            revokeTokens(user.id, token);
+          }
+          audit(user, 'Ubah profil', b.newPin ? 'Ganti PIN' : 'Ganti nama'); save();
+          return sendJSON(res, 200, { user: publicUser(user) });
+        }
+        if (p === '/api/users/save') return sendJSON(res, 200, saveUser(user, b));
+        if (p === '/api/users/delete') return sendJSON(res, 200, deleteUser(user, b.id));
         const m = p.match(/^\/api\/session\/(\w+)$/);
-        if (m && actions[m[1]]) return sendJSON(res, 200, actions[m[1]](b));
-        if (p === '/api/tv/cmd') return sendJSON(res, 200, await tvCommand(b));
-        if (p === '/api/tv/bulk') return sendJSON(res, 200, await tvBulk(b));
+        if (m && actions[m[1]]) {
+          need(user, ACTION_PERM[m[1]]);
+          if (m[1] === 'extend' && !b.packageId && Number(b.minutes) < 0) need(user, 'reduceTime');
+          if ((m[1] === 'checkout' || m[1] === 'sale') && Number(b.discount) > 0) need(user, 'discount');
+          actor = user;
+          let result;
+          try { result = actions[m[1]](b, user); } finally { actor = null; }
+          let det = b.unitId ? unitName(b.unitId) : '';
+          if (m[1] === 'start') det += ' · ' + (b.mode === 'open' ? 'Main Bebas' : (b.packageId ? ((db.packages.find((x) => x.id === b.packageId) || {}).name || '') : b.minutes + ' menit'));
+          if (m[1] === 'extend') det += ' · ' + (b.packageId ? ((db.packages.find((x) => x.id === b.packageId) || {}).name || 'paket') : (Number(b.minutes) > 0 ? '+' : '') + b.minutes + ' menit');
+          if (m[1] === 'move') det += ' → ' + unitName(b.toUnitId);
+          if (m[1] === 'checkout' || m[1] === 'sale') det += ' · ' + result.id + ' · Rp ' + Number(result.total).toLocaleString('id-ID') + (result.discount ? ' (diskon Rp ' + Number(result.discount).toLocaleString('id-ID') + ')' : '') + ' · ' + result.method;
+          if (m[1] === 'orderAdd') det += ' · ' + (b.items || []).map((it) => (it.qty || 1) + 'x ' + ((db.menu.find((x) => x.id === it.itemId) || {}).name || '?')).join(', ');
+          audit(user, ACTION_LABEL[m[1]] || m[1], det.replace(/^ · /, '')); save();
+          return sendJSON(res, 200, result);
+        }
+        if (p === '/api/tv/cmd' || p === '/api/tv/bulk') {
+          need(user, 'tvControl');
+          const r = p === '/api/tv/cmd' ? await tvCommand(b) : await tvBulk(b);
+          if (['power', 'powerOff', 'setup', 'setHdmi', 'settings', 'lock', 'message'].indexOf(b.cmd) >= 0 || p === '/api/tv/bulk') {
+            audit(user, 'Kontrol TV', (p === '/api/tv/bulk' ? 'Massal (' + (r.sent || 0) + ' TV)' : unitName(b.unitId)) + ' · ' + b.cmd + (b.text ? ' · "' + String(b.text).slice(0, 60) + '"' : '')); save();
+          }
+          return sendJSON(res, 200, r);
+        }
         const c = p.match(/^\/api\/config\/(\w+)$/);
-        if (c) return sendJSON(res, 200, saveConfig(c[1], b.value));
+        if (c) {
+          need(user, 'settings');
+          const r = saveConfig(c[1], b.value);
+          audit(user, 'Ubah pengaturan', { settings: 'Umum', types: 'Tipe & Tarif', packages: 'Paket', units: 'Unit TV', menu: 'Menu F&B' }[c[1]] || c[1]); save();
+          return sendJSON(res, 200, r);
+        }
         if (p === '/api/transaction/delete') {
+          need(user, 'deleteTrx');
           const i = db.transactions.findIndex((x) => x.id === b.id);
           if (i < 0) throw new Error('Transaksi tidak ditemukan');
-          db.transactions.splice(i, 1); changed(); return sendJSON(res, 200, { ok: true });
+          const x = db.transactions[i];
+          db.transactions.splice(i, 1);
+          audit(user, 'Hapus transaksi', x.id + ' · Rp ' + Number(x.total).toLocaleString('id-ID') + ' · ' + (x.unitName || ''));
+          changed(); return sendJSON(res, 200, { ok: true });
         }
         if (p === '/api/restore') {
+          need(user, 'backup');
           if (!b.data || !Array.isArray(b.data.units)) throw new Error('File backup tidak valid');
-          db = Object.assign(defaultDB(), b.data); save(true); changed(); return sendJSON(res, 200, { ok: true });
+          const keepUsers = db.users, keepTokens = db.tokens, keepAudit = db.audit;
+          const next = Object.assign(defaultDB(), b.data);
+          if (!Array.isArray(next.users) || !next.users.length) next.users = keepUsers;
+          next.tokens = keepTokens;
+          next.audit = keepAudit;
+          db = normalize(next);
+          audit(user, 'Pulihkan data', 'dari file cadangan');
+          save(true); changed(); return sendJSON(res, 200, { ok: true });
         }
         return sendJSON(res, 404, { error: 'Endpoint tidak ada' });
       }
@@ -743,7 +978,7 @@ function start(opts) {
       if (p === '/tv' || p === '/tv/') return serveStatic(res, 'tv.html');
       return serveStatic(res, p.replace(/^\/+/, ''));
     } catch (e) {
-      return sendJSON(res, 400, { error: e.message || String(e) });
+      return sendJSON(res, e.code === 403 ? 403 : 400, { error: e.message || String(e) });
     }
   });
 
@@ -752,7 +987,9 @@ function start(opts) {
     const q = url.parse(conn.req.url, true).query;
     const ip = (conn.req.socket.remoteAddress || '').replace('::ffff:', '');
     if (q.role === 'admin') {
-      if (q.token !== tokenFor(db.settings.pin)) { conn.send({ t: 'auth', error: 'Belum login' }); return conn.close(); }
+      const user = userFromToken(q.token);
+      if (!user) { conn.send({ t: 'auth', error: 'Belum login' }); return conn.close(); }
+      conn.user = user; conn.token = q.token;
       adminConns.add(conn);
       conn.send(snapshot());
       conn.on('close', () => adminConns.delete(conn));
@@ -820,7 +1057,7 @@ function start(opts) {
     log('Panel kasir   : http://localhost:' + PORT);
     ips.forEach((i) => log('Dari jaringan : http://' + i.address + ':' + PORT + '  (' + i.name + ')'));
     log('Layar TV (web): http://<ip-server>:' + PORT + '/tv?unit=tv1');
-    log('PIN default   : 1234 (segera ganti di Pengaturan)');
+    log('Login awal    : Admin Utama · PIN 1234 (segera ganti di Profil)');
     log('Data          : ' + DB_FILE);
     log('==============================================');
   });

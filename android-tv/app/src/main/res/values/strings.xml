@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">El Classico Billing</string>
-    <string name="acc_name">El Classico — Matikan TV</string>
-    <string name="acc_desc">Mengizinkan panel kasir El Classico mematikan layar TV (standby). Tidak membaca isi layar.</string>
+    <string name="acc_name">El Classico Billing</string>
+    <string name="acc_desc">Menampilkan timer sisa waktu sewa di pojok layar saat bermain dan mengizinkan kasir mematikan TV dari panel. Tidak membaca isi layar.</string>
 </resources>
