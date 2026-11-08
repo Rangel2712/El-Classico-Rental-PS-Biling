@@ -11,8 +11,8 @@ android {
         applicationId = "com.elclassico.billing"
         minSdk = 21
         targetSdk = 33
-        versionCode = 6
-        versionName = "1.5.0"
+        versionCode = 7
+        versionName = "1.5.1"
     }
     // Kunci tanda tangan tetap (disimpan di repo) agar APK versi baru bisa langsung
     // dipasang menimpa versi lama tanpa uninstall.

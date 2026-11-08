@@ -430,9 +430,11 @@ class BillingService : Service() {
     /** Dipanggil saat izin overlay / aksesibilitas berubah. */
     fun overlayChanged() {
         main.post {
-            removeOverlay()
-            ensureOverlay()
-            main.postDelayed({ sendStatus() }, 800)
+            try {
+                removeOverlay()
+                ensureOverlay()
+            } catch (_: Throwable) { }
+            main.postDelayed({ try { sendStatus() } catch (_: Throwable) { } }, 800)
         }
     }
 
@@ -489,7 +491,7 @@ class BillingService : Service() {
             overlayWm = wm
             overlayKind = kind
             overlayReady = false
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             overlay = null
             overlayWm = null
         }

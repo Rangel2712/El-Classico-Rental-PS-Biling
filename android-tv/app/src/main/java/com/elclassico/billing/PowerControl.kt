@@ -17,15 +17,24 @@ class PowerAccessibility : AccessibilityService() {
     companion object { @Volatile var instance: PowerAccessibility? = null }
 
     override fun onServiceConnected() {
-        instance = this
-        // Aksesibilitas aktif → timer bisa tampil di atas game tanpa izin overlay
-        BillingService.instance?.overlayChanged()
+        // Jangan pernah crash di sini — jika layanan crash, Android langsung mematikannya lagi.
+        try {
+            super.onServiceConnected()
+            instance = this
+            // Aksesibilitas aktif → timer bisa tampil di atas game tanpa izin overlay (ditunda agar aman)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    if (BillingService.instance == null) BillingService.start(applicationContext)
+                    BillingService.instance?.overlayChanged()
+                } catch (_: Throwable) { }
+            }, 1500)
+        } catch (_: Throwable) { }
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
     override fun onInterrupt() { }
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
-        BillingService.instance?.overlayChanged()
+        try { BillingService.instance?.overlayChanged() } catch (_: Throwable) { }
         return super.onUnbind(intent)
     }
 
