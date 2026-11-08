@@ -138,6 +138,10 @@ class MainActivity : Activity(), Bus.Listener {
                 pageReady = true
                 Bus.lastState?.let { onServerMessage(it, false) }
                 onConnection(Bus.connected)
+                if (BillingService.instance?.blackedOut == true) {
+                    setBlackout(true)
+                    web.evaluateJavascript("window.ec&&ec.push(" + JSONObject.quote("{\"t\":\"cmd\",\"cmd\":\"blackout\"}") + ")", null)
+                }
             }
         }
         @JavascriptInterface fun openSetup() { main.post { askPin() } }
@@ -153,6 +157,7 @@ class MainActivity : Activity(), Bus.Listener {
         val code = event.keyCode
         if (blackedOut && event.action == KeyEvent.ACTION_DOWN) {
             setBlackout(false)
+            BillingService.instance?.onLocalUnblack()
             web.evaluateJavascript("window.ec&&ec.push(" + JSONObject.quote("{\"t\":\"cmd\",\"cmd\":\"unblack\"}") + ")", null)
             return true
         }

@@ -225,6 +225,7 @@
 
   // ---------- Layar hitam (TV "dimatikan" tanpa izin sistem / mode browser) ----------
   function blackout(on) {
+    if (on) { $('warn').classList.add('hidden'); $('msg').classList.add('hidden'); }
     let el = $('blackout');
     if (!el) { el = document.createElement('div'); el.id = 'blackout'; el.className = 'blackout hidden'; document.body.appendChild(el); }
     el.classList.toggle('hidden', !on);

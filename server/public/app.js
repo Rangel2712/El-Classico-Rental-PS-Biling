@@ -452,7 +452,7 @@
       '<button class="btn ' + (st === 'expired' ? 'gold' : 'red') + '" data-a="checkout">' + ic('pay', 15) + 'Bayar</button></div>';
     return '<div class="unit ' + st + (warn ? ' warn' : '') + '" data-id="' + esc(u.id) + '" style="--tc:' + esc(ty.color || '#64748b') + '">' +
       '<div class="head"><div class="tv">' + ic('tv', 20) + '</div><div><div class="nm">' + esc(u.name) + '</div><div class="ty">' + esc(ty.name.toUpperCase()) + (u.note ? ' · <span class="muted">' + esc(u.note) + '</span>' : '') + '</div></div>' +
-      '<div class="right">' + (u.online && u.info && u.info.kind === 'native' && u.info.overlayMode === 'toast' ? '<span class="chip paused" title="Timer di atas game belum aktif — buka Kontrol TV">Timer ⚠</span>' : '') + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar mati tetapi TV tetap online — bisa dinyalakan dari panel">Layar mati</span>' : '') + (!u.online ? '<span class="chip off" title="' + (u.mac ? 'Bisa dicoba nyalakan via Wake-on-LAN' : 'MAC belum diketahui — nyalakan dengan remote sekali') + '">' + (u.mac ? 'Offline · WOL' : 'Offline') + '</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
+      '<div class="right">' + (u.online && u.info && u.info.kind === 'native' && u.info.overlayMode === 'toast' ? '<span class="chip paused" title="Timer di atas game belum aktif — buka Kontrol TV">Timer ⚠</span>' : '') + (u.online && u.info && u.info.blackout ? '<span class="chip off" title="Standby layar hitam — tekan Hidupkan untuk menyalakan">Standby</span>' : '') + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar mati tetapi TV tetap online — bisa dinyalakan dari panel">Layar mati</span>' : '') + (!u.online ? '<span class="chip off" title="' + (u.mac ? 'Bisa dicoba nyalakan via Wake-on-LAN' : 'MAC belum diketahui — nyalakan dengan remote sekali') + '">' + (u.mac ? 'Offline · WOL' : 'Offline') + '</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
       '<div class="timebox" title="Detail & kontrol"><div class="lbl">' + label + '</div>' + time + bar + '</div>' +
       (s ? '<div class="meta"><span>' + ic('user', 13) + ' ' + esc(s.customer || 'Pelanggan') + ' · mulai ' + tm(s.startedAt) + '</span><b class="cost num">' + rp(s.mode === 'open' ? openCost(u, s, L.elapsed) + s.ordersTotal : s.total) + '</b></div>' : '') +
       (pend.length ? '<div class="ordersmini">' + pend.map((o) => '<span class="new">' + esc(o.emoji || '') + ' ' + o.qty + '× ' + esc(o.name) + '</span>').join('') + '</div>' : '') +
@@ -788,7 +788,7 @@
       '<label class="row" style="margin:14px 0 4px;gap:10px;font-size:13px"><span class="switch"><input type="checkbox" id="skip" checked><span></span></span>Lewati TV yang sedang dipakai (sesi aktif)</label>' +
       '<div class="sep"></div><b>Aksi</b>' +
       '<div class="tvctl" style="margin-top:10px">' +
-      [['powerOff', 'powerOff', 'Matikan TV', 'red'], ['power', 'power', 'Hidupkan TV', 'green'], ['lock', 'lock', 'Layar Kunci', ''], ['mute', 'mute', 'Bisu / Suara', ''],
+      [['powerOff', 'powerOff', 'Matikan / Standby', 'red'], ['power', 'power', 'Hidupkan TV', 'green'], ['lock', 'lock', 'Layar Kunci', ''], ['mute', 'mute', 'Bisu / Suara', ''],
         ['volumeDown', 'volDown', 'Volume −', ''], ['volumeUp', 'vol', 'Volume +', ''], ['beep', 'beep', 'Bunyikan', ''], ['reload', 'reload', 'Muat Ulang App', '']]
         .map(([c, i, l, k]) => '<button class="btn ' + k + '" data-c="' + c + '">' + ic(i, 22) + l + '</button>').join('') + '</div>' +
       '<div class="vol" style="margin-top:12px">' + ic('vol', 20) + '<span class="muted" style="font-size:12px">Atur volume</span><input type="range" id="bv" min="0" max="100" value="30"><span class="v" id="bvv">30%</span><button class="btn sm" id="bvs">Terapkan</button></div>' +
@@ -954,8 +954,10 @@
       sw('g_autoHdmi', s.autoHdmi, 'Otomatis pindah ke HDMI', 'Saat sewa dimulai TV langsung ke input PS') +
       sw('g_showTimerPill', s.showTimerPill, 'Tampilkan timer kecil di TV', 'Sisa waktu di pojok layar selama bermain') +
       '<div class="field"><label class="f">Cara mematikan TV</label><select id="g_powerOffMode">' +
-      '<option value="soft" ' + ((s.powerOffMode || 'soft') === 'soft' ? 'selected' : '') + '>Layar mati, TV tetap online — bisa dinyalakan dari panel (disarankan)</option>' +
-      '<option value="deep" ' + (s.powerOffMode === 'deep' ? 'selected' : '') + '>Standby penuh — hemat listrik, menyalakan butuh Wake-on-LAN</option></select></div>' +
+      '<option value="black" ' + ((s.powerOffMode || 'black') === 'black' ? 'selected' : '') + '>Standby layar hitam — TV tetap menyala & online, nyala instan (paling andal)</option>' +
+      '<option value="soft" ' + (s.powerOffMode === 'soft' ? 'selected' : '') + '>Layar dimatikan sistem — coba tetap online (tidak semua merek TV mendukung)</option>' +
+      '<option value="deep" ' + (s.powerOffMode === 'deep' ? 'selected' : '') + '>Standby penuh — paling hemat listrik, menyalakan butuh Wake-on-LAN</option></select>' +
+      '<div class="dim" style="font-size:12px;margin-top:4px">Jika TV menjadi <b>Offline</b> setelah dimatikan, pilih <b>Standby layar hitam</b>.</div></div>' +
       sw('g_autoOffAfterCheckout', s.autoOffAfterCheckout, 'Matikan TV otomatis setelah bayar', 'TV mati ±6 detik setelah transaksi selesai') +
       '<div class="field"><label class="f">Matikan TV kosong otomatis setelah (menit, 0 = tidak)</label><input type="number" id="g_idleOffMinutes" value="' + (s.idleOffMinutes || 0) + '"></div>' +
 

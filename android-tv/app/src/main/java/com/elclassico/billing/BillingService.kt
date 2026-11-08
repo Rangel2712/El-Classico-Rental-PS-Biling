@@ -122,6 +122,7 @@ class BillingService : Service() {
      * Menahan CPU & WiFi tetap aktif saat layar TV mati, sehingga TV tetap terhubung ke server
      * dan bisa dinyalakan lagi dari panel kasir tanpa Wake-on-LAN.
      */
+    @Volatile var blackedOut = false
     private var cpuLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -280,6 +281,7 @@ class BillingService : Service() {
         })
         .put("openOnWake", Prefs.openOnWake(this))
         .put("canPowerOff", PowerControl.canPowerOff(this))
+        .put("blackout", blackedOut)
 
     private fun sendStatus() {
         ws?.send(JSONObject().put("t", "status").put("info", deviceInfo()).toString())
@@ -456,6 +458,17 @@ class BillingService : Service() {
 
     // ---------------------------------------------------------------- matikan TV
     private fun powerOff(mode: String) {
+        if (mode == "black") {
+            // Standby layar hitam: TV tetap menyala & online, layar ditutup hitam dan diredupkan
+            holdOnline(true)
+            blackedOut = true
+            if (lastMode?.startsWith("play") != true) showLock()
+            val cmd = JSONObject().put("t", "cmd").put("cmd", "blackout").toString()
+            main.postDelayed({ Bus.cmd(cmd); pushOverlay(cmd, true) }, 400)
+            ack("Standby layar hitam — TV tetap online", "success")
+            main.postDelayed({ sendStatus() }, 900)
+            return
+        }
         // "soft" (bawaan): layar mati tetapi TV tetap online → bisa dinyalakan dari panel
         // "deep": standby penuh, hemat listrik → menyalakan butuh Wake-on-LAN
         holdOnline(mode != "deep")
@@ -473,7 +486,19 @@ class BillingService : Service() {
     }
 
     private fun unblack() {
-        Bus.cmd(JSONObject().put("t", "cmd").put("cmd", "unblack").toString())
+        blackedOut = false
+        val cmd = JSONObject().put("t", "cmd").put("cmd", "unblack").toString()
+        Bus.cmd(cmd)
+        pushOverlay(cmd, true)
+    }
+
+    /** Layar hitam dibuka lewat tombol remote di TV. */
+    fun onLocalUnblack() {
+        main.post {
+            blackedOut = false
+            pushOverlay(JSONObject().put("t", "cmd").put("cmd", "unblack").toString(), true)
+            sendStatus()
+        }
     }
 
     // ---------------------------------------------------------------- overlay

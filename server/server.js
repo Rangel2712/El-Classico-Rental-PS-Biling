@@ -14,7 +14,7 @@ const url = require('url');
 const { execFile } = require('child_process');
 const WS = require('./lib/ws');
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const DISCOVERY_PORT = 41234;
 
 // ---------- Default data ----------
@@ -42,7 +42,8 @@ function defaultDB() {
       pillOpacity: 0.55,           // transparansi timer (0.2–1) agar tidak mengganggu permainan
       pillMode: 'always',          // always | peek (muncul sebentar tiap N menit) | last5 (hanya 5 menit terakhir)
       pillPeekEvery: 10,           // menit, untuk mode peek
-      powerOffMode: 'soft',        // soft: layar mati, TV tetap online | deep: standby penuh (butuh Wake-on-LAN)
+      powerOffMode: 'black',       // black: standby layar hitam (TV tetap menyala & online, paling andal)
+                                   // soft: layar dimatikan sistem, coba tetap online | deep: standby penuh (butuh Wake-on-LAN)
       tvTheme: 'elclassico',       // tema layar TV
       panelTheme: 'elclassico',    // tema bawaan panel untuk pengguna yang belum memilih
     },
@@ -157,6 +158,7 @@ function start(opts) {
     const oldPin = x.settings && x.settings.pin;
     x.settings = Object.assign({}, d.settings, x.settings || {});
     delete x.settings.pin;
+    if (!x.settings._pom2) { x.settings.powerOffMode = 'black'; x.settings._pom2 = true; } // v1.7: layar hitam jadi bawaan
     ['types', 'packages', 'units', 'menu', 'transactions'].forEach((k) => { if (!Array.isArray(x[k])) x[k] = d[k]; });
     x.sessions = x.sessions || {};
     x.counters = x.counters || { trx: 0 };
@@ -668,7 +670,7 @@ function start(opts) {
       if (['s', 'm', 'l'].indexOf(value.pillSize) >= 0) s.pillSize = value.pillSize;
       if (value.pillOpacity != null) s.pillOpacity = clamp(Number(value.pillOpacity) || 0.55, 0.2, 1);
       if (['always', 'peek', 'last5'].indexOf(value.pillMode) >= 0) s.pillMode = value.pillMode;
-      if (['soft', 'deep'].indexOf(value.powerOffMode) >= 0) s.powerOffMode = value.powerOffMode;
+      if (['black', 'soft', 'deep'].indexOf(value.powerOffMode) >= 0) s.powerOffMode = value.powerOffMode;
       ['tvTheme', 'panelTheme'].forEach((k) => { if (typeof value[k] === 'string' && /^[a-z0-9-]{2,30}$/.test(value[k])) s[k] = value[k]; });
       if (value.pillPeekEvery != null) s.pillPeekEvery = clamp(Math.round(Number(value.pillPeekEvery) || 10), 1, 60);
       s.warningSeconds = clamp(s.warningSeconds || 60, 10, 600);
