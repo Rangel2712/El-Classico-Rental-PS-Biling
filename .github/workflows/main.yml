@@ -12,6 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Siapkan folder proyek
+        shell: bash
+        run: |
+          if [ ! -d android-tv ]; then
+            f=$(find . -maxdepth 4 -type d -name android-tv -not -path './.git/*' | head -1)
+            if [ -z "$f" ]; then echo "::error::Folder android-tv tidak ditemukan. Unggah isi ElClassico-Billing.zip ke repository."; ls -la; exit 1; fi
+            d=$(dirname "$f"); echo "Proyek ada di $d"; shopt -s dotglob; cp -r "$d"/* .
+          fi
+          ls -la
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - uses: android-actions/setup-android@v3
@@ -29,6 +38,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Siapkan folder proyek
+        shell: bash
+        run: |
+          if [ ! -d desktop ]; then
+            f=$(find . -maxdepth 4 -type d -name desktop -not -path './.git/*' | head -1)
+            if [ -z "$f" ]; then echo "::error::Folder desktop tidak ditemukan."; ls -la; exit 1; fi
+            d=$(dirname "$f"); shopt -s dotglob; cp -r "$d"/* .
+          fi
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
       - name: Build EXE
@@ -46,6 +63,14 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
+      - name: Siapkan folder proyek
+        shell: bash
+        run: |
+          if [ ! -d desktop ]; then
+            f=$(find . -maxdepth 4 -type d -name desktop -not -path './.git/*' | head -1)
+            if [ -z "$f" ]; then echo "::error::Folder desktop tidak ditemukan."; ls -la; exit 1; fi
+            d=$(dirname "$f"); shopt -s dotglob; cp -r "$d"/* .
+          fi
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
       - name: Build DMG
@@ -61,10 +86,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Siapkan folder proyek
+        shell: bash
+        run: |
+          if [ ! -d server ]; then
+            f=$(find . -maxdepth 4 -type f -name server.js -not -path './.git/*' | head -1)
+            if [ -z "$f" ]; then echo "::error::server.js tidak ditemukan."; ls -la; exit 1; fi
+            d=$(dirname "$(dirname "$f")"); shopt -s dotglob; cp -r "$d"/* .
+          fi
       - name: Zip
         run: |
           mkdir -p out/ElClassico-Server
-          cp -r server start-server-mac.command start-server-windows.bat PANDUAN.md out/ElClassico-Server/
+          cp -r server out/ElClassico-Server/
+          cp start-server-mac.command start-server-windows.bat PANDUAN.md out/ElClassico-Server/ 2>/dev/null || true
           rm -rf out/ElClassico-Server/server/data
           cd out && zip -r ../ElClassico-Server.zip ElClassico-Server
       - uses: actions/upload-artifact@v4
