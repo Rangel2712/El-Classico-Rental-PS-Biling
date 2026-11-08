@@ -1,0 +1,24 @@
+{
+  "appId": "com.elclassico.billing.desktop",
+  "productName": "El Classico Billing",
+  "directories": { "output": "dist-win7", "buildResources": "build" },
+  "files": ["main.js", "preload.js", "launcher.html", "build/icon.png"],
+  "extraResources": [
+    { "from": "../server", "to": "server", "filter": ["**/*", "!data/**"] }
+  ],
+  "win": {
+    "target": [
+      { "target": "nsis", "arch": ["ia32", "x64"] },
+      { "target": "portable", "arch": ["ia32"] }
+    ],
+    "icon": "build/icon.png",
+    "artifactName": "ElClassico-Billing-${version}-Windows7-setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "shortcutName": "El Classico Billing"
+  },
+  "portable": { "artifactName": "ElClassico-Billing-${version}-Windows7-portable-32bit.${ext}" }
+}
