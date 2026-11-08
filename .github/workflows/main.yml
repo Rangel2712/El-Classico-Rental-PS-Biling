@@ -1,0 +1,83 @@
+name: Build El Classico Billing
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: APK Smart TV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.7' }
+      - name: Build APK
+        run: gradle -p android-tv assembleRelease --no-daemon --stacktrace
+      - name: Rename
+        run: cp android-tv/app/build/outputs/apk/release/app-release.apk ElClassico-TV.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: ElClassico-TV-apk, path: ElClassico-TV.apk }
+
+  windows:
+    name: Aplikasi Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Build EXE
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: ElClassico-Windows-exe, path: desktop/dist/*.exe }
+
+  mac:
+    name: Aplikasi macOS (.dmg, Intel)
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Build DMG
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --mac --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: ElClassico-macOS-dmg, path: desktop/dist/*.dmg }
+
+  server:
+    name: Paket Server (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip
+        run: |
+          mkdir -p out/ElClassico-Server
+          cp -r server start-server-mac.command start-server-windows.bat PANDUAN.md out/ElClassico-Server/
+          rm -rf out/ElClassico-Server/server/data
+          cd out && zip -r ../ElClassico-Server.zip ElClassico-Server
+      - uses: actions/upload-artifact@v4
+        with: { name: ElClassico-Server-zip, path: ElClassico-Server.zip }
+
+  release:
+    name: Rilis
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ apk, windows, mac, server ]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with: { files: 'artifacts/*' }
