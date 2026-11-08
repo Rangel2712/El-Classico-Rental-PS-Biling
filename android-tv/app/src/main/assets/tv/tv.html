@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>El Classico — Layar TV</title>
+<link rel="stylesheet" href="tv.css">
+</head>
+<body>
+<!-- ============ LAYAR KUNCI ============ -->
+<div id="lock" class="lock hidden">
+  <svg class="pitch" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice"><g fill="none" stroke="rgba(255,255,255,.05)" stroke-width="3"><rect x="60" y="60" width="1480" height="780" rx="8"/><line x1="800" y1="60" x2="800" y2="840"/><circle cx="800" cy="450" r="130"/><circle cx="800" cy="450" r="6" fill="rgba(255,255,255,.08)"/><rect x="60" y="250" width="220" height="400"/><rect x="1320" y="250" width="220" height="400"/><rect x="60" y="350" width="80" height="200"/><rect x="1460" y="350" width="80" height="200"/></g></svg>
+  <div class="glow g1"></div><div class="glow g2"></div>
+  <header class="lh">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#f5c518" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4"/><circle cx="15.5" cy="11" r=".9" fill="#f5c518"/><circle cx="17.5" cy="13" r=".9" fill="#f5c518"/><path d="M7.5 6h9A5.5 5.5 0 0 1 22 11.5v1.7a3.3 3.3 0 0 1-6 1.9L14.8 14H9.2L8 15.1a3.3 3.3 0 0 1-6-1.9v-1.7A5.5 5.5 0 0 1 7.5 6z"/></svg></div>
+      <div><div class="bn" id="bName">El Classico Rental PS</div><div class="bt" id="bTag">Main Puas, Harga Pas</div></div>
+    </div>
+    <div class="clockw"><div class="clk" id="clk">--:--</div><div class="date" id="date"></div></div>
+  </header>
+
+  <section class="hero">
+    <div class="unitb"><span id="uName">TV</span><i></i><span id="uType">PlayStation</span></div>
+    <h1 id="hTitle">SIAP DIMAINKAN</h1>
+    <div id="hTime" class="htime hidden">00:00:00</div>
+    <p id="hSub">Hubungi kasir untuk mulai bermain</p>
+    <div id="bill" class="bill hidden"></div>
+  </section>
+
+  <section class="info" id="info">
+    <div class="panel"><div class="ph">🎮 Tarif Sewa</div><div id="rates" class="rates"></div></div>
+    <div class="panel"><div class="ph">⏱️ Paket Hemat</div><div id="pkgs" class="pkgs"></div></div>
+    <div class="panel wide"><div class="ph">🍜 Menu Makanan &amp; Minuman</div><div class="marq"><div id="menu" class="mtrack"></div></div></div>
+  </section>
+  <footer class="lf"><span id="addr"></span><span class="conn"><i id="cdot"></i><span id="ctext">Menghubungkan…</span></span></footer>
+</div>
+
+<!-- ============ MODE BERMAIN (browser tanpa APK) ============ -->
+<div id="play" class="play hidden">
+  <div class="pbrand" id="pBrand">El Classico</div>
+  <div class="punit" id="pUnit">TV</div>
+  <div class="plbl" id="pLbl">SISA WAKTU</div>
+  <div class="ptime" id="pTime">00:00:00</div>
+  <div class="pbar"><i id="pBar"></i></div>
+  <div class="phint">Selamat bermain! Panggil kasir untuk tambah waktu atau pesan makanan.</div>
+</div>
+
+<!-- ============ OVERLAY SAAT BERMAIN ============ -->
+<div id="pill" class="pill hidden"><span class="pd"></span><span class="pu" id="pillU">TV</span><span class="pt" id="pillT">00:00</span></div>
+<div id="warn" class="warn hidden">
+  <div class="wcard">
+    <svg class="ring" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="rb"/><circle cx="60" cy="60" r="52" class="rf" id="ringF"/></svg>
+    <div class="wnum" id="wNum">60</div>
+    <div class="wt">WAKTU HAMPIR HABIS</div>
+    <div class="ws">Hubungi kasir untuk tambah waktu ⏱️</div>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+<div id="msg" class="msgbox hidden"><div class="mc"><div class="mh">📢 Pesan dari Kasir</div><div class="mt" id="msgT"></div></div></div>
+<div id="setupHint" class="setuphint hidden"></div>
+<script src="tv.js"></script>
+</body>
+</html>

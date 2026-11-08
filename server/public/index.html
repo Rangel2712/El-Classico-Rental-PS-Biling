@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#060a13">
+<title>El Classico Rental PS Billing</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="box">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#f5c518" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h4M8 7v4"/><circle cx="15.5" cy="9.5" r=".8" fill="#f5c518"/><circle cx="17.5" cy="11.5" r=".8" fill="#f5c518"/><path d="M7.5 4h9A5.5 5.5 0 0 1 22 9.5v3.2a3.3 3.3 0 0 1-6 1.9L14.8 13H9.2L8 14.6a3.3 3.3 0 0 1-6-1.9V9.5A5.5 5.5 0 0 1 7.5 4z"/></svg></div>
+    <h1>El Classico</h1>
+    <p>Rental PS Billing · Masukkan PIN kasir</p>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="pad" id="pad"></div>
+    <p class="dim" style="margin-top:20px;font-size:12px">PIN awal: 1234 — ganti di Pengaturan</p>
+  </div>
+</div>
+
+<div class="app hidden" id="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#f5c518" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h4M8 7v4"/><circle cx="15.5" cy="9.5" r=".8" fill="#f5c518"/><circle cx="17.5" cy="11.5" r=".8" fill="#f5c518"/><path d="M7.5 4h9A5.5 5.5 0 0 1 22 9.5v3.2a3.3 3.3 0 0 1-6 1.9L14.8 13H9.2L8 14.6a3.3 3.3 0 0 1-6-1.9V9.5A5.5 5.5 0 0 1 7.5 4z"/></svg></div>
+      <div><b id="brandName">El Classico</b><small>Rental PS Billing</small></div>
+    </div>
+    <div class="nav active" data-view="dashboard"><span class="ico" data-i="grid"></span><span>Dashboard</span></div>
+    <div class="nav" data-view="pos"><span class="ico" data-i="cart"></span><span>Kasir F&amp;B</span></div>
+    <div class="nav" data-view="orders"><span class="ico" data-i="bell"></span><span>Pesanan</span><span class="badge hidden" id="ordBadge">0</span></div>
+    <div class="nav" data-view="report"><span class="ico" data-i="chart"></span><span>Laporan</span></div>
+    <div class="nav" data-view="settings"><span class="ico" data-i="gear"></span><span>Pengaturan</span></div>
+    <div class="foot" id="sideFoot"></div>
+  </aside>
+  <main class="main">
+    <div class="top">
+      <div><h1 id="viewTitle">Dashboard</h1><div class="sub" id="viewSub"></div></div>
+      <div class="grow"></div>
+      <button class="btn icon ghost" id="soundBtn" title="Suara notifikasi"></button>
+      <div class="conn"><span class="dot" id="connDot"></span><span class="t" id="connTxt">Menghubungkan…</span></div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toasts" id="toasts"></div>
+<div id="printArea"></div>
+<script src="app.js"></script>
+</body>
+</html>
