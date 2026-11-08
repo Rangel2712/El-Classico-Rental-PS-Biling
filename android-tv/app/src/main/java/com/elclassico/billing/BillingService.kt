@@ -96,6 +96,7 @@ class BillingService : Service() {
         super.onCreate()
         instance = this
         startForeground(1, buildNotification("Menghubungkan ke server…"))
+        holdOnline(true)
         val f = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -116,7 +117,49 @@ class BillingService : Service() {
         return START_STICKY
     }
 
+    // ---------------------------------------------------------------- tetap online saat layar mati
+    /**
+     * Menahan CPU & WiFi tetap aktif saat layar TV mati, sehingga TV tetap terhubung ke server
+     * dan bisa dinyalakan lagi dari panel kasir tanpa Wake-on-LAN.
+     */
+    private var cpuLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("WakelockTimeout")
+    private fun holdOnline(on: Boolean) {
+        try {
+            if (on) {
+                if (cpuLock == null) {
+                    val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                    cpuLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "elclassico:online").apply { setReferenceCounted(false); acquire() }
+                }
+                if (wifiLock == null) {
+                    val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                    wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "elclassico:wifi").apply { setReferenceCounted(false); acquire() }
+                }
+            } else {
+                cpuLock?.let { if (it.isHeld) it.release() }; cpuLock = null
+                wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null
+            }
+        } catch (_: Exception) { }
+    }
+
+    /** Menyalakan layar dan langsung menampilkan El Classico (atau HDMI bila sedang ada sewa). */
+    private fun powerOn() {
+        unblack()
+        holdOnline(true)
+        TvControl.wakeScreen(this)
+        if (lastMode == "play" || lastMode == "play-nohdmi") {
+            showLock() // activity dengan turnScreenOn → layar pasti menyala
+            main.postDelayed({ TvControl.openHdmi(this, Prefs.hdmiInput(this)) }, 1500)
+        } else showLock()
+        onTvWake()
+        main.postDelayed({ sendStatus() }, 1500)
+    }
+
     override fun onDestroy() {
+        holdOnline(false)
         stopped = true
         instance = null
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) { }
@@ -375,8 +418,8 @@ class BillingService : Service() {
                 "hdmi" -> if (!TvControl.openHdmi(this, Prefs.hdmiInput(this))) ack("Input HDMI belum diatur di aplikasi TV", "warning")
                 "lock" -> { enforceAfter = 0; showLock() }
                 "unlock" -> { lastMode = null; Bus.lastState?.let { applyState(JSONObject(it)) } }
-                "wake", "power" -> { unblack(); TvControl.wakeScreen(this); onTvWake() }
-                "powerOff" -> powerOff()
+                "wake", "power" -> powerOn()
+                "powerOff" -> powerOff(m.optString("value", "soft"))
                 "beep" -> TvControl.beep()
                 "reload" -> { overlay?.reload(); Bus.setMode("reload"); reconnectNow() }
                 "setup" -> {
@@ -412,7 +455,11 @@ class BillingService : Service() {
     }
 
     // ---------------------------------------------------------------- matikan TV
-    private fun powerOff() {
+    private fun powerOff(mode: String) {
+        // "soft" (bawaan): layar mati tetapi TV tetap online → bisa dinyalakan dari panel
+        // "deep": standby penuh, hemat listrik → menyalakan butuh Wake-on-LAN
+        holdOnline(mode != "deep")
+        ack(if (mode == "deep") "Standby penuh — nyalakan lagi lewat Wake-on-LAN" else "Layar dimatikan, TV tetap online", "info")
         val method = PowerControl.powerOff(this)
         if (method != null) {
             ack("TV dimatikan (standby)", "success")

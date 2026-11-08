@@ -11,9 +11,10 @@ const os = require('os');
 const crypto = require('crypto');
 const dgram = require('dgram');
 const url = require('url');
+const { execFile } = require('child_process');
 const WS = require('./lib/ws');
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const DISCOVERY_PORT = 41234;
 
 // ---------- Default data ----------
@@ -41,6 +42,7 @@ function defaultDB() {
       pillOpacity: 0.55,           // transparansi timer (0.2–1) agar tidak mengganggu permainan
       pillMode: 'always',          // always | peek (muncul sebentar tiap N menit) | last5 (hanya 5 menit terakhir)
       pillPeekEvery: 10,           // menit, untuk mode peek
+      powerOffMode: 'soft',        // soft: layar mati, TV tetap online | deep: standby penuh (butuh Wake-on-LAN)
       tvTheme: 'elclassico',       // tema layar TV
       panelTheme: 'elclassico',    // tema bawaan panel untuk pengguna yang belum memilih
     },
@@ -332,6 +334,8 @@ function start(opts) {
   }
 
   function sendTV(unitId, msg) {
+    if (msg && msg.cmd === 'powerOff' && !msg.value) msg = Object.assign({}, msg, { value: db.settings.powerOffMode || 'soft' });
+    if (msg && msg.cmd === 'powerOff') tvInfo[unitId] = Object.assign({}, tvInfo[unitId] || {}, { offAt: now(), offMode: msg.value });
     (tvConns.get(unitId) || new Set()).forEach((c) => c.send(msg));
   }
   function pushTV(unitId) { sendTV(unitId, tvState(unitId)); }
@@ -356,7 +360,7 @@ function start(opts) {
   }
 
   // ---------- Wake-on-LAN ----------
-  function wake(mac) {
+  function wake(mac, lastIp) {
     return new Promise((resolve, reject) => {
       const hex = String(mac || '').replace(/[^0-9a-fA-F]/g, '');
       if (hex.length !== 12) return reject(new Error('Alamat MAC tidak valid'));
@@ -367,6 +371,7 @@ function start(opts) {
       sock.bind(() => {
         sock.setBroadcast(true);
         const targets = broadcastAddrs();
+        if (lastIp && /^\d+\.\d+\.\d+\.\d+$/.test(lastIp)) targets.push(lastIp);
         let n = 0;
         targets.forEach((addr) => [9, 7].forEach((port) => {
           n++;
@@ -375,6 +380,30 @@ function start(opts) {
       });
     });
   }
+
+  // ---------- Deteksi MAC TV otomatis dari tabel ARP komputer server ----------
+  function lookupMac(ip) {
+    return new Promise((resolve) => {
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip || '')) return resolve(null);
+      execFile('arp', ['-a'], { timeout: 5000, windowsHide: true }, (err, out) => {
+        if (err || !out) return resolve(null);
+        const re = new RegExp('(^|[^0-9.])' + ip.replace(/\./g, '\\.') + '([^0-9.]|$)');
+        const line = String(out).split(/\r?\n/).find((l) => re.test(l));
+        const m = line && line.match(/([0-9a-f]{1,2}[:-]){5}[0-9a-f]{1,2}/i);
+        if (!m) return resolve(null);
+        const mac = m[0].split(/[:-]/).map((x) => x.padStart(2, '0')).join(':').toUpperCase();
+        if (/^(FF:){5}FF$|^(00:){5}00$/.test(mac) || /^01:00:5E/.test(mac)) return resolve(null);
+        resolve(mac);
+      });
+    });
+  }
+  async function autoMac(unitId) {
+    const un = unitById(unitId); const inf = tvInfo[unitId] || {};
+    if (!un || !inf.ip || (un.mac && !un.macAuto)) return;
+    const mac = await lookupMac(inf.ip);
+    if (mac && mac !== un.mac) { un.mac = mac; un.macAuto = true; save(); pushAdmins(); log(un.name + ': MAC terdeteksi otomatis ' + mac); }
+  }
+  setInterval(() => { tvConns.forEach((set, id) => { if (set.size) autoMac(id); }); }, 10 * 60000);
 
   // ---------- Aksi sesi ----------
   const actions = {
@@ -588,11 +617,11 @@ function start(opts) {
       const online = (tvConns.get(unit.id) || new Set()).size > 0;
       if (online) sendTV(unit.id, { t: 'cmd', cmd: 'wake' });
       if (!unit.mac) {
-        if (online) return { ok: true, note: 'Layar dibangunkan (MAC belum diisi, Wake-on-LAN dilewati)' };
-        throw new Error('TV offline & alamat MAC belum diisi (Pengaturan › Unit TV) untuk Wake-on-LAN');
+        if (online) return { ok: true, note: 'Layar TV dinyalakan' };
+        throw new Error('TV offline dan alamat MAC belum diketahui. Nyalakan TV sekali dengan remote; setelah tersambung, MAC terdeteksi otomatis sehingga TV bisa dinyalakan dari panel.');
       }
-      const sent = await wake(unit.mac);
-      return { ok: true, sentTo: sent };
+      const sent = await wake(unit.mac, (tvInfo[unit.id] || {}).ip);
+      return { ok: true, sentTo: sent, note: online ? 'Layar TV dinyalakan' : 'Sinyal Wake-on-LAN dikirim ke ' + unit.mac + ' — TV menyala dalam ±5–15 detik bila fitur Wake on LAN aktif' };
     }
     if (TV_CMDS.indexOf(b.cmd) < 0) throw new Error('Perintah tidak dikenal');
     if (b.cmd === 'powerOff' && unit) idleSince[unit.id] = null;
@@ -614,7 +643,7 @@ function start(opts) {
       try {
         if (b.cmd === 'power') {
           idleSince[id] = now(); sendTV(id, { t: 'cmd', cmd: 'wake' });
-          if (unit.mac) await wake(unit.mac); else if (!(tvConns.get(id) || new Set()).size) throw new Error('offline & MAC belum diisi');
+          if (unit.mac) await wake(unit.mac, (tvInfo[id] || {}).ip); else if (!(tvConns.get(id) || new Set()).size) throw new Error('offline & MAC belum diisi');
         } else {
           if (TV_CMDS.indexOf(b.cmd) < 0) throw new Error('Perintah tidak dikenal');
           const set = tvConns.get(id);
@@ -639,6 +668,7 @@ function start(opts) {
       if (['s', 'm', 'l'].indexOf(value.pillSize) >= 0) s.pillSize = value.pillSize;
       if (value.pillOpacity != null) s.pillOpacity = clamp(Number(value.pillOpacity) || 0.55, 0.2, 1);
       if (['always', 'peek', 'last5'].indexOf(value.pillMode) >= 0) s.pillMode = value.pillMode;
+      if (['soft', 'deep'].indexOf(value.powerOffMode) >= 0) s.powerOffMode = value.powerOffMode;
       ['tvTheme', 'panelTheme'].forEach((k) => { if (typeof value[k] === 'string' && /^[a-z0-9-]{2,30}$/.test(value[k])) s[k] = value[k]; });
       if (value.pillPeekEvery != null) s.pillPeekEvery = clamp(Math.round(Number(value.pillPeekEvery) || 10), 1, 60);
       s.warningSeconds = clamp(s.warningSeconds || 60, 10, 600);
@@ -657,6 +687,7 @@ function start(opts) {
         if (key === 'menu') { x.price = Math.max(0, Number(x.price) || 0); x.active = x.active !== false; if (x.stock === '' || x.stock == null) x.stock = null; else x.stock = Number(x.stock); }
       });
       if (key === 'units') {
+        value.forEach((x) => { const old = db.units.find((o) => o.id === x.id); if (old && old.macAuto && old.mac === x.mac) x.macAuto = true; });
         const active = Object.keys(db.sessions);
         active.forEach((id) => { if (!ids.has(id)) throw new Error('Unit ' + id + ' masih punya sesi aktif'); });
       }
@@ -879,7 +910,13 @@ function start(opts) {
         const user = userFromToken(token);
         if (!user) return sendJSON(res, 401, { error: 'Belum login' });
         user._token = token;
-        if (p === '/api/me') return sendJSON(res, 200, { user: publicUser(user), permLabels: PERMS });
+        if (p === '/api/me') {
+          return sendJSON(res, 200, {
+            user: publicUser(user), permLabels: PERMS,
+            defaultPin: hashPin('1234', user.salt) === user.pinHash,
+            staffCount: db.users.filter((x) => x.role !== 'owner').length,
+          });
+        }
         if (p === '/api/state') return sendJSON(res, 200, snapshot());
         if (p === '/api/report' || p === '/api/export.csv') {
           const q = Object.assign({}, u.query);
@@ -1012,6 +1049,8 @@ function start(opts) {
     tvConns.get(unitId).add(conn);
     tvInfo[unitId] = Object.assign({}, tvInfo[unitId] || {}, { ip, kind: conn.meta.kind, connectedAt: now() });
     conn.send(tvState(unitId));
+    setTimeout(() => autoMac(unitId), 2000);
+    if (tvInfo[unitId]) { delete tvInfo[unitId].offAt; }
     if (!wasOnline) { const un = unitById(unitId); notifyAdmins((un ? un.name : unitId) + ' online', 'info', unitId); }
     pushAdmins();
     conn.on('message', (m) => {

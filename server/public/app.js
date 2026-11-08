@@ -161,6 +161,7 @@
       S.panelTheme = r.panelTheme || 'elclassico';
       const lu = S.pubUsers.find((x) => x.id === S.loginUser); setTheme((lu && lu.theme) || S.panelTheme);
       $('#loginFoot').style.display = S.pubUsers.length === 1 ? '' : 'none';
+      $('#loginNote').classList.toggle('hidden', S.pubUsers.some((x) => x.role !== 'owner'));
       renderUserPick();
     } catch (e) { $('#loginErr').textContent = 'Server tidak dapat dihubungi'; }
   }
@@ -188,6 +189,8 @@
     else if (pin.length < 8) pin += k;
     renderPin();
   }
+  $('#loginRefresh').onclick = () => loadPublicUsers();
+  setInterval(() => { if (!$('#login').classList.contains('hidden')) loadPublicUsers(); }, 15000);
   $('#pad').onclick = (e) => { const k = e.target.dataset.k; if (k) pinKey(k); };
   document.addEventListener('keydown', (e) => {
     if ($('#login').classList.contains('hidden')) return;
@@ -199,6 +202,46 @@
     if (S.ws) { S.ws.onclose = null; S.ws.close(); }
     closeModal();
     $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); pin = ''; renderPin(); loadPublicUsers();
+  }
+
+  // ================= Panduan awal Admin Utama =================
+  function onboarding(info) {
+    if (!info || !S.me) return;
+    if (info.defaultPin) toast('⚠️ PIN Anda masih 1234 — segera ganti lewat tombol Profil', 'warning');
+    if (!can('users') || info.staffCount > 0 || sessionStorage.getItem('ec_onb')) return;
+    sessionStorage.setItem('ec_onb', '1');
+    const rows = [];
+    const m = modal(ic('users') + ' Tambahkan Akun Karyawan',
+      '<p class="muted" style="margin-top:0;line-height:1.6">Saat ini baru ada akun <b>Admin Utama</b>, sehingga hanya nama itu yang muncul di layar login. Tambahkan karyawan di bawah. Setiap karyawan login dengan <b>memilih namanya</b> dan memasukkan <b>PIN</b> sendiri.</p>' +
+      '<div id="obRows"></div><button class="btn sm" id="obAdd">' + ic('plus', 14) + 'Tambah baris</button>' +
+      '<p class="dim" style="font-size:12px;margin-top:14px">Peran <b>Kasir</b> bisa memulai sewa, tambah waktu, jeda, bayar, Kasir F&amp;B & kontrol TV. Hak akses dapat diubah kapan saja di menu <b>Pengguna</b>.</p>',
+      '<button class="btn" data-x>Nanti saja</button><button class="btn gold" id="obSave">' + ic('check', 15) + 'Simpan Akun</button>', 'wide');
+    const add = () => { rows.push({ name: '', pin: '', role: 'kasir' }); draw(); };
+    function draw() {
+      $('#obRows', m).innerHTML = rows.map((r, i) => '<div class="row" style="margin-bottom:10px"><input data-i="' + i + '" data-k="name" placeholder="Nama karyawan, mis. Yoel" value="' + esc(r.name) + '" style="flex:2">' +
+        '<input data-i="' + i + '" data-k="pin" placeholder="PIN 4–8 angka" inputmode="numeric" maxlength="8" value="' + esc(r.pin) + '" style="flex:1">' +
+        '<select data-i="' + i + '" data-k="role" style="flex:1"><option value="kasir" ' + (r.role === 'kasir' ? 'selected' : '') + '>Kasir / Karyawan</option>' + (S.me.role === 'owner' ? '<option value="admin" ' + (r.role === 'admin' ? 'selected' : '') + '>Admin</option>' : '') + '</select></div>').join('');
+      $$('#obRows [data-i]', m).forEach((el) => (el.oninput = el.onchange = () => { rows[el.dataset.i][el.dataset.k] = el.value; }));
+    }
+    add(); add();
+    $('#obAdd', m).onclick = add;
+    $('[data-x]', m).onclick = closeModal;
+    $('#obSave', m).onclick = async () => {
+      const list = rows.filter((r) => r.name.trim());
+      if (!list.length) return toast('Isi minimal satu nama karyawan', 'warning');
+      let ok = 0;
+      for (const r of list) {
+        const base = r.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '').slice(0, 16) || 'kasir';
+        let username = base.length < 3 ? base + '01' : base, n = 2;
+        const taken = new Set(((S.usersData && S.usersData.users) || []).map((x) => x.username));
+        while (taken.has(username)) username = base + n++;
+        for (let k = 0; k < 6; k++) {
+          try { await api('/api/users/save', { name: r.name.trim(), username, role: r.role, pin: r.pin }); ok++; r.done = true; break; }
+          catch (e) { if (/Username sudah/.test(e.message)) { username = base + n++; continue; } toast(r.name + ': ' + e.message, 'danger'); break; }
+        }
+      }
+      if (ok) { toast(ok + ' akun karyawan dibuat — nama mereka kini muncul di layar login', 'success'); closeModal(); if (S.view === 'users') loadUsers(); }
+    };
   }
 
   // ================= Profil & menu sesuai izin =================
@@ -261,7 +304,9 @@
   }
 
   async function boot() {
-    try { const r = await api('/api/me'); S.me = r.user; } catch (e) { return; }
+    let meInfo;
+    try { meInfo = await api('/api/me'); S.me = meInfo.user; } catch (e) { return; }
+    setTimeout(() => onboarding(meInfo), 900);
     setTheme(S.me.theme || localStorage.getItem('ec_theme') || 'elclassico');
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     applyMe();
@@ -407,7 +452,7 @@
       '<button class="btn ' + (st === 'expired' ? 'gold' : 'red') + '" data-a="checkout">' + ic('pay', 15) + 'Bayar</button></div>';
     return '<div class="unit ' + st + (warn ? ' warn' : '') + '" data-id="' + esc(u.id) + '" style="--tc:' + esc(ty.color || '#64748b') + '">' +
       '<div class="head"><div class="tv">' + ic('tv', 20) + '</div><div><div class="nm">' + esc(u.name) + '</div><div class="ty">' + esc(ty.name.toUpperCase()) + (u.note ? ' · <span class="muted">' + esc(u.note) + '</span>' : '') + '</div></div>' +
-      '<div class="right">' + (u.online && u.info && u.info.kind === 'native' && u.info.overlayMode === 'toast' ? '<span class="chip paused" title="Timer di atas game belum aktif — buka Kontrol TV">Timer ⚠</span>' : '') + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar TV mati / standby">Layar mati</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
+      '<div class="right">' + (u.online && u.info && u.info.kind === 'native' && u.info.overlayMode === 'toast' ? '<span class="chip paused" title="Timer di atas game belum aktif — buka Kontrol TV">Timer ⚠</span>' : '') + (u.online && u.info && u.info.screenOn === false ? '<span class="chip off" title="Layar mati tetapi TV tetap online — bisa dinyalakan dari panel">Layar mati</span>' : '') + (!u.online ? '<span class="chip off" title="' + (u.mac ? 'Bisa dicoba nyalakan via Wake-on-LAN' : 'MAC belum diketahui — nyalakan dengan remote sekali') + '">' + (u.mac ? 'Offline · WOL' : 'Offline') + '</span>' : '') + '<span class="chip ' + (s && s.mode === 'open' && st === 'playing' ? 'open' : st) + '">' + (s && s.mode === 'open' && st === 'playing' ? 'Main Bebas' : STATUS[st]) + '</span><span class="dot ' + (u.online ? 'on' : 'off') + '" title="' + (u.online ? 'TV online' : 'TV offline') + '"></span></div></div>' +
       '<div class="timebox" title="Detail & kontrol"><div class="lbl">' + label + '</div>' + time + bar + '</div>' +
       (s ? '<div class="meta"><span>' + ic('user', 13) + ' ' + esc(s.customer || 'Pelanggan') + ' · mulai ' + tm(s.startedAt) + '</span><b class="cost num">' + rp(s.mode === 'open' ? openCost(u, s, L.elapsed) + s.ordersTotal : s.total) + '</b></div>' : '') +
       (pend.length ? '<div class="ordersmini">' + pend.map((o) => '<span class="new">' + esc(o.emoji || '') + ' ' + o.qty + '× ' + esc(o.name) + '</span>').join('') + '</div>' : '') +
@@ -678,6 +723,10 @@
       } else if (t === 'tv') {
         const inf = u.info || {};
         b.innerHTML = '<div class="spread" style="margin-bottom:14px"><div><span class="dot ' + (u.online ? 'on' : 'off') + '" style="display:inline-block;margin-right:8px"></span><b>' + (u.online ? 'TV Online' : 'TV Offline') + '</b><div class="muted" style="font-size:12px;margin-top:4px">' + esc([inf.model, inf.android ? 'Android ' + inf.android : '', inf.ip, inf.kind === 'native' ? 'APK v' + (inf.appVersion || '') : inf.kind === 'web' ? 'Mode browser' : ''].filter(Boolean).join(' · ') || 'Belum ada info perangkat') + '</div></div><div class="muted mono" style="font-size:12px">MAC: ' + esc(u.mac || '— belum diisi') + '</div></div>' +
+          (!u.online ? '<div class="notice" style="background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3)"><b>TV offline.</b> ' +
+            (inf.offAt ? 'Terakhir dimatikan ' + tm(inf.offAt) + (inf.offMode === 'deep' ? ' (standby penuh)' : '') + '. ' : '') +
+            (u.mac ? 'Tekan <b>Hidupkan TV</b> untuk mengirim Wake-on-LAN ke <span class="mono">' + esc(u.mac) + '</span>' + (u.macAuto ? ' (terdeteksi otomatis)' : '') + '. Fitur <i>Wake on LAN / Wake on WLAN / Networked standby / Quick start</i> harus aktif di pengaturan jaringan TV.'
+              : 'Alamat MAC TV belum diketahui, jadi TV tidak bisa dinyalakan dari jauh. Nyalakan TV sekali dengan remote. Begitu tersambung, MAC terdeteksi otomatis.') + '</div>' : '') +
           (inf.kind === 'native' ? tvSetupPanel(u, inf) : '') +
           '<div class="vol">' + ic('vol', 20) + '<input type="range" id="vr" min="0" max="' + (inf.maxVolume || 100) + '" value="' + (inf.volume != null ? inf.volume : 10) + '"><span class="v" id="vv">' + (inf.volume != null ? inf.volume : '–') + '</span></div>' +
           '<div class="tvctl" style="margin-top:12px">' +
@@ -904,6 +953,9 @@
       sw('g_lockOnPause', s.lockOnPause, 'Kunci layar saat dijeda', 'TV menampilkan layar “Dijeda”') +
       sw('g_autoHdmi', s.autoHdmi, 'Otomatis pindah ke HDMI', 'Saat sewa dimulai TV langsung ke input PS') +
       sw('g_showTimerPill', s.showTimerPill, 'Tampilkan timer kecil di TV', 'Sisa waktu di pojok layar selama bermain') +
+      '<div class="field"><label class="f">Cara mematikan TV</label><select id="g_powerOffMode">' +
+      '<option value="soft" ' + ((s.powerOffMode || 'soft') === 'soft' ? 'selected' : '') + '>Layar mati, TV tetap online — bisa dinyalakan dari panel (disarankan)</option>' +
+      '<option value="deep" ' + (s.powerOffMode === 'deep' ? 'selected' : '') + '>Standby penuh — hemat listrik, menyalakan butuh Wake-on-LAN</option></select></div>' +
       sw('g_autoOffAfterCheckout', s.autoOffAfterCheckout, 'Matikan TV otomatis setelah bayar', 'TV mati ±6 detik setelah transaksi selesai') +
       '<div class="field"><label class="f">Matikan TV kosong otomatis setelah (menit, 0 = tidak)</label><input type="number" id="g_idleOffMinutes" value="' + (s.idleOffMinutes || 0) + '"></div>' +
 
@@ -947,6 +999,7 @@
       const v = {};
       ['name', 'tagline', 'address', 'phone', 'receiptFooter', 'warningSeconds', 'rounding', 'openBillingBlock', 'idleOffMinutes'].forEach((k) => (v[k] = $('#g_' + k).value));
       v.pillPosition = $('#g_pillPosition').value; v.pillSize = $('#g_pillSize').value;
+      v.powerOffMode = $('#g_powerOffMode').value;
       v.tvTheme = tvTheme; v.panelTheme = $('#g_panelTheme').value;
       v.pillMode = $('#g_pillMode').value; v.pillPeekEvery = $('#g_pillPeekEvery').value; v.pillOpacity = Number($('#g_pillOpacity').value) / 100;
       ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout', 'bigCountdown'].forEach((k) => (v[k] = $('#g_' + k).checked));

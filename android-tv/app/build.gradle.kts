@@ -12,7 +12,7 @@ android {
         minSdk = 21
         targetSdk = 33
         versionCode = 7
-        versionName = "1.5.1"
+        versionName = "1.6.0"
     }
     // Kunci tanda tangan tetap (disimpan di repo) agar APK versi baru bisa langsung
     // dipasang menimpa versi lama tanpa uninstall.
