@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'">
+<title>El Classico Billing</title>
+<style>
+  :root{--gold:#f5c518;--line:rgba(255,255,255,.1);--muted:#8a97b0}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;font-family:"Inter","Segoe UI",Roboto,system-ui,sans-serif;color:#e8edf7;display:grid;place-items:center;
+    background:radial-gradient(800px 400px at 0% 0%,rgba(165,0,68,.35),transparent 70%),radial-gradient(800px 400px at 100% 100%,rgba(0,77,152,.35),transparent 70%),#060a13}
+  .wrap{width:min(940px,92vw);padding:30px 0}
+  .head{display:flex;align-items:center;gap:16px;margin-bottom:28px}
+  .logo{width:64px;height:64px;border-radius:18px;display:grid;place-items:center;background:conic-gradient(from 210deg,#a50044,#004d98,#a50044);box-shadow:0 0 0 2px rgba(245,197,24,.7)}
+  h1{margin:0;font-size:26px}.sub{color:var(--gold);letter-spacing:3px;font-size:12px;font-weight:700}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:linear-gradient(170deg,#121b30,#0c1322);border:1px solid var(--line);border-radius:20px;padding:24px}
+  .card h2{margin:0 0 6px;font-size:19px}.card p{color:var(--muted);line-height:1.6;margin:0 0 16px;font-size:14px}
+  .ic{font-size:34px;margin-bottom:10px}
+  label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin:12px 0 6px}
+  input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:#0a1120;color:#fff;font:inherit;outline:none}
+  input:focus{border-color:var(--gold)}
+  button{font:inherit;font-weight:700;border-radius:12px;padding:12px 16px;cursor:pointer;border:1px solid rgba(255,255,255,.14);background:#141e33;color:#fff;width:100%;margin-top:14px}
+  button.gold{background:linear-gradient(180deg,#ffdd55,#f5c518);color:#1b1400;border:0}
+  .list{display:grid;gap:8px;margin-top:10px}
+  .srv{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;background:#0a1120;border:1px solid var(--line);cursor:pointer}
+  .srv:hover{border-color:var(--gold)}
+  .mono{font-family:Consolas,"SF Mono",monospace}
+  .err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);color:#fca5a5;padding:12px 14px;border-radius:12px;margin-bottom:18px}
+  .foot{color:#5d6a85;font-size:12px;margin-top:20px;text-align:center}
+  @media(max-width:760px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="logo"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#f5c518" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4"/><circle cx="15.5" cy="11" r=".9" fill="#f5c518"/><circle cx="17.5" cy="13" r=".9" fill="#f5c518"/><path d="M7.5 6h9A5.5 5.5 0 0 1 22 11.5v1.7a3.3 3.3 0 0 1-6 1.9L14.8 14H9.2L8 15.1a3.3 3.3 0 0 1-6-1.9v-1.7A5.5 5.5 0 0 1 7.5 6z"/></svg></div>
+    <div><h1>El Classico Billing</h1><div class="sub">RENTAL PS BILLING</div></div>
+  </div>
+  <div id="err" class="err" style="display:none"></div>
+  <div class="cards">
+    <div class="card">
+      <div class="ic">🖥️</div>
+      <h2>Jadikan Komputer Ini Server</h2>
+      <p>Pilih ini untuk komputer kasir utama. Server billing berjalan di sini, Smart TV &amp; perangkat lain terhubung ke komputer ini lewat WiFi.</p>
+      <label>Port server</label><input id="port" type="number" value="8080">
+      <label>Alamat yang akan dipakai TV</label><div id="ips" class="mono" style="color:var(--gold)"></div>
+      <button class="gold" id="srvBtn">Jalankan Server &amp; Buka Panel</button>
+    </div>
+    <div class="card">
+      <div class="ic">📡</div>
+      <h2>Kontrol dari Server Lain</h2>
+      <p>Pilih ini untuk laptop/PC tambahan. Panel kasir dibuka dari server yang sudah berjalan (mis. MacBook) di WiFi yang sama.</p>
+      <button id="scan">🔍 Cari server di jaringan</button>
+      <div class="list" id="list"></div>
+      <label>Atau ketik alamat server</label><input id="url" placeholder="http://192.168.1.10:8080">
+      <button class="gold" id="cliBtn">Hubungkan</button>
+    </div>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+<script>
+(async function () {
+  const D = window.ecDesktop;
+  const q = new URLSearchParams(location.search);
+  if (q.get('error')) { const e = document.getElementById('err'); e.style.display = 'block'; e.textContent = q.get('error') + ' — periksa server lalu coba lagi.'; }
+  const cfg = D ? await D.getConfig() : { ips: [], version: '-' };
+  const port = document.getElementById('port');
+  if (cfg.port) port.value = cfg.port;
+  if (cfg.url) document.getElementById('url').value = cfg.url;
+  const showIps = () => { document.getElementById('ips').innerHTML = (cfg.ips.length ? cfg.ips : ['(tidak ada jaringan)']).map((i) => 'http://' + i + ':' + port.value).join('<br>'); };
+  port.oninput = showIps; showIps();
+  document.getElementById('foot').textContent = 'Versi ' + cfg.version + ' · ' + (cfg.platform === 'darwin' ? 'macOS' : cfg.platform === 'win32' ? 'Windows' : cfg.platform);
+  document.getElementById('srvBtn').onclick = () => D.apply({ mode: 'server', port: Number(port.value) || 8080 });
+  document.getElementById('cliBtn').onclick = () => {
+    let u = document.getElementById('url').value.trim();
+    if (!u) return;
+    if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+    if (!/:\d+/.test(u.replace(/^https?:\/\//, ''))) u += ':8080';
+    D.apply({ mode: 'client', url: u });
+  };
+  document.getElementById('scan').onclick = async () => {
+    const b = document.getElementById('scan'); b.textContent = '⏳ Mencari (4 detik)…'; b.disabled = true;
+    const list = await D.discover();
+    b.textContent = '🔍 Cari server di jaringan'; b.disabled = false;
+    const el = document.getElementById('list');
+    el.innerHTML = list.length ? list.map((s) => '<div class="srv" data-u="http://' + s.host + ':' + s.port + '"><span>' + (s.name || 'Server') + '</span><span class="mono">' + s.host + ':' + s.port + '</span></div>').join('') : '<div style="color:#8a97b0;font-size:13px">Tidak ditemukan. Pastikan server menyala & satu WiFi.</div>';
+    el.querySelectorAll('.srv').forEach((x) => (x.onclick = () => { document.getElementById('url').value = x.dataset.u; }));
+  };
+})();
+</script>
+</body>
+</html>
