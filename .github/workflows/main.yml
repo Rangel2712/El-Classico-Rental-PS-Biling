@@ -54,7 +54,30 @@ jobs:
           npx electron-builder --win --x64 --publish never
       - uses: actions/upload-artifact@v4
         with: { name: ElClassico-Windows-exe, path: desktop/dist/*.exe }
-
+    windows7:
+    name: Aplikasi Windows 7 (.exe, 32 & 64-bit)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Siapkan folder proyek
+        shell: bash
+        run: |
+          if [ ! -d desktop ]; then
+            f=$(find . -maxdepth 4 -type d -name desktop -not -path './.git/*' | head -1)
+            if [ -z "$f" ]; then echo "::error::Folder desktop tidak ditemukan."; ls -la; exit 1; fi
+            d=$(dirname "$f"); shopt -s dotglob; cp -r "$d"/* .
+          fi
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Build EXE Windows 7
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm pkg set devDependencies.electron=22.3.27
+          npm install --no-audit --no-fund
+          npx electron-builder --win --config electron-builder-win7.json --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: ElClassico-Windows7-exe, path: desktop/dist-win7/*.exe }
   mac:
     name: Aplikasi macOS (.dmg, Intel)
     runs-on: macos-latest
