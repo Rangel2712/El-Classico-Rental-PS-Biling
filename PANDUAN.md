@@ -125,6 +125,12 @@ Login panel dilakukan dengan **memilih nama** lalu memasukkan **PIN pribadi**. L
 - Kasir memakai **Shift Saya › Cetak Rekap Shift** saat tutup kasir atau serah terima.
 - Akun yang dinonaktifkan atau direset PIN-nya otomatis keluar dari semua perangkat. Salah PIN 5× akan mengunci akun selama 1 menit.
 
+### Tema tampilan
+Tersedia **15 tema**: El Classico, Midnight Biru, Lapangan Hijau, Neon Cyber, Raja Ampat, Cenderawasih, Senja Arfak, Merah Membara, Ungu Royal, Sakura, Arena Biru, Kopi Papua, Grafit Mono, Terang Klasik ☀️ dan Terang Biru ☀️.
+- **Tema panel**: setiap pengguna memilih sendiri lewat ikon palet 🎨 di kanan atas (atau Profil). Pilihan tersimpan di akunnya, berlaku di semua perangkat, dan langsung tampil saat namanya dipilih di layar login.
+- **Tema layar TV**: diatur Admin di Pengaturan › Umum › **Tema**. Berlaku untuk layar kunci, timer, dan notifikasi di semua TV. Tema terang tetap memakai latar gelap di TV supaya nyaman di ruangan redup.
+- **Tema bawaan panel**: dipakai untuk pengguna yang belum memilih tema.
+
 ## 6. Mematikan TV dari panel kasir
 
 Ada tiga cara: tombol ⏻̸ merah di kartu unit, **Kontrol TV › Matikan TV**, atau **Kontrol Semua TV** di Dashboard. Menu terakhir bisa memilih beberapa TV sekaligus atau semua TV, dan otomatis melewati TV yang sedang dipakai.
@@ -192,4 +198,4 @@ Pasang **Tailscale** (gratis) di komputer server dan di HP/laptop pemilik. Setel
 | Admin Utama lupa PIN | Hubungi Admin Utama lain bila ada. Jika tidak: matikan server, hapus bagian `"users"` di `data/db.json` (simpan cadangan dulu), lalu jalankan lagi. Admin Utama baru dibuat dengan PIN `1234` |
 
 ---
-**El Classico Rental PS Billing v1.4.0** · Server Node.js (tanpa dependensi) · Panel web · Android TV (Kotlin) · Desktop (Electron)
+**El Classico Rental PS Billing v1.5.0** · Server Node.js (tanpa dependensi) · Panel web · Android TV (Kotlin) · Desktop (Electron)

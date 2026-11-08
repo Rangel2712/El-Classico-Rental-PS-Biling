@@ -1,7 +1,7 @@
 {
   "name": "elclassico-billing-desktop",
   "productName": "El Classico Billing",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "El Classico Rental PS Billing — Server & Panel Kasir",
   "author": "El Classico Rental PS",
   "main": "main.js",

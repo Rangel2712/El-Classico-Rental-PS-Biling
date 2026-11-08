@@ -46,6 +46,7 @@
     list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
     key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.5 11.5L21 2M17 6l3 3M15 8l2 2"/>',
     edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    palette: '<circle cx="13.5" cy="6.5" r="1.3"/><circle cx="17.5" cy="10.5" r="1.3"/><circle cx="8.5" cy="7.5" r="1.3"/><circle cx="6.5" cy="12.5" r="1.3"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>',
     gamepad: '<path d="M6 11h4M8 9v4"/><circle cx="15.5" cy="11" r=".9"/><circle cx="17.5" cy="13" r=".9"/><path d="M7.5 6h9A5.5 5.5 0 0 1 22 11.5v1.7a3.3 3.3 0 0 1-6 1.9L14.8 14H9.2L8 15.1a3.3 3.3 0 0 1-6-1.9v-1.7A5.5 5.5 0 0 1 7.5 6z"/>',
   };
   const ic = (n, s) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (I[n] || '') + '</svg>';
@@ -82,6 +83,25 @@
   const initials = (n) => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
   const ROLE_TXT = { owner: 'Admin Utama', admin: 'Admin', kasir: 'Kasir' };
 
+  // ================= Tema =================
+  function setTheme(id, persist) {
+    if (!window.ECTheme) return;
+    const t = ECTheme.apply(id);
+    try { localStorage.setItem('ec_theme', t.id); } catch (e) {}
+    if (persist && S.me && S.token) { S.me.theme = t.id; api('/api/me/update', { theme: t.id }).catch(() => {}); }
+  }
+  function openThemes() {
+    const cur = (S.me && S.me.theme) || localStorage.getItem('ec_theme') || 'elclassico';
+    const m = modal(ic('palette') + ' Pilih Tema Panel', '<p class="muted" style="margin-top:0">Tema berlaku untuk akun Anda di semua perangkat. Tema layar TV diatur terpisah di Pengaturan › Umum.</p><div class="theme-grid" id="tg"></div>', '<button class="btn gold" data-x>' + ic('check', 15) + 'Selesai</button>', 'wide');
+    $('[data-x]', m).onclick = closeModal;
+    const draw = (sel) => {
+      $('#tg', m).innerHTML = ECTheme.list.map((t) => '<div class="tcard ' + (t.id === sel ? 'on' : '') + '" data-t="' + t.id + '">' + ECTheme.swatch(t) + '<b>' + esc(t.name) + (t.mode === 'light' ? ' ☀️' : '') + '</b><small>' + esc(t.desc) + '</small></div>').join('');
+      $$('#tg .tcard', m).forEach((c) => (c.onclick = () => { setTheme(c.dataset.t, true); draw(c.dataset.t); }));
+    };
+    draw(cur);
+  }
+  $('#themeBtn').onclick = openThemes;
+
   // ================= Suara =================
   let actx;
   function beep(freq, dur, type, vol) {
@@ -97,6 +117,7 @@
   }
   const chime = { success: () => { beep(660, .12); setTimeout(() => beep(990, .18), 120); }, warning: () => { beep(880, .15, 'square', .08); setTimeout(() => beep(880, .15, 'square', .08), 220); }, danger: () => { [0, 250, 500].forEach((d) => setTimeout(() => beep(520, .2, 'sawtooth', .1), d)); }, info: () => beep(740, .1) };
   function renderSoundBtn() { $('#soundBtn').innerHTML = ic(S.sound ? 'sound' : 'soundOff'); }
+  $('#themeBtn').innerHTML = ic('palette');
   $('#soundBtn').onclick = () => { S.sound = !S.sound; localStorage.setItem('ec_sound', S.sound ? '1' : '0'); renderSoundBtn(); beep(800, .1); };
   renderSoundBtn();
 
@@ -137,13 +158,18 @@
       S.pubUsers = r.users || [];
       $('#loginBrand').textContent = (r.name || 'El Classico').replace(/ Rental PS$/i, '');
       if (!S.pubUsers.find((x) => x.id === S.loginUser)) S.loginUser = S.pubUsers.length ? S.pubUsers[0].id : '';
+      S.panelTheme = r.panelTheme || 'elclassico';
+      const lu = S.pubUsers.find((x) => x.id === S.loginUser); setTheme((lu && lu.theme) || S.panelTheme);
       $('#loginFoot').style.display = S.pubUsers.length === 1 ? '' : 'none';
       renderUserPick();
     } catch (e) { $('#loginErr').textContent = 'Server tidak dapat dihubungi'; }
   }
   function renderUserPick() {
     $('#userPick').innerHTML = S.pubUsers.map((x) => '<div class="upick ' + (x.id === S.loginUser ? 'on' : '') + '" data-u="' + esc(x.id) + '"><span class="avatar ' + x.role + '">' + esc(initials(x.name)) + '</span><b>' + esc(x.name) + '</b><small>' + esc(ROLE_TXT[x.role] || x.role) + '</small></div>').join('');
-    $$('#userPick .upick').forEach((el) => (el.onclick = () => { S.loginUser = el.dataset.u; pin = ''; renderPin(); $('#loginErr').textContent = ''; renderUserPick(); }));
+    $$('#userPick .upick').forEach((el) => (el.onclick = () => {
+      S.loginUser = el.dataset.u; pin = ''; renderPin(); $('#loginErr').textContent = ''; renderUserPick();
+      const lu = S.pubUsers.find((x) => x.id === S.loginUser); setTheme((lu && lu.theme) || S.panelTheme || 'elclassico');
+    }));
   }
   async function tryLogin() {
     if (!S.loginUser) return;
@@ -192,9 +218,11 @@
       '<div class="row" style="margin-bottom:16px"><span class="avatar ' + me.role + '" style="width:52px;height:52px;font-size:18px">' + esc(initials(me.name)) + '</span><div><b style="font-size:16px">' + esc(me.name) + '</b><div class="muted">@' + esc(me.username) + ' · <span class="role ' + me.role + '">' + esc(me.roleLabel) + '</span></div></div></div>' +
       '<div class="field"><label class="f">Nama tampilan</label><input id="pn" value="' + esc(me.name) + '"></div><div class="sep"></div><h3>Ganti PIN</h3>' +
       '<div class="row"><div class="field" style="flex:1"><label class="f">PIN lama</label><input type="password" id="po" inputmode="numeric" maxlength="8"></div><div class="field" style="flex:1"><label class="f">PIN baru (4–8 angka)</label><input type="password" id="p1" inputmode="numeric" maxlength="8"></div><div class="field" style="flex:1"><label class="f">Ulangi PIN baru</label><input type="password" id="p2" inputmode="numeric" maxlength="8"></div></div>' +
+      '<div class="row" style="margin-bottom:12px"><button class="btn" id="pth">' + ic('palette', 15) + 'Ganti Tema Panel</button><span class="muted" style="font-size:12px">Saat ini: ' + esc(ECTheme.get(me.theme || localStorage.getItem('ec_theme')).name) + '</span></div>' +
       '<div class="dim" style="font-size:12px">Hak akses Anda: ' + Object.keys(me.perms).filter((k) => me.perms[k]).length + ' dari ' + Object.keys(me.perms).length + ' izin.</div>',
       '<button class="btn" data-x>Tutup</button><button class="btn gold" id="ps">' + ic('check', 15) + 'Simpan</button>');
     $('[data-x]', m).onclick = closeModal;
+    $('#pth', m).onclick = openThemes;
     $('#ps', m).onclick = async () => {
       const body = { name: $('#pn', m).value };
       if ($('#p1', m).value) {
@@ -234,6 +262,7 @@
 
   async function boot() {
     try { const r = await api('/api/me'); S.me = r.user; } catch (e) { return; }
+    setTheme(S.me.theme || localStorage.getItem('ec_theme') || 'elclassico');
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     applyMe();
     connect(); loadToday(true); setView(S.view);
@@ -878,6 +907,10 @@
       sw('g_autoOffAfterCheckout', s.autoOffAfterCheckout, 'Matikan TV otomatis setelah bayar', 'TV mati ±6 detik setelah transaksi selesai') +
       '<div class="field"><label class="f">Matikan TV kosong otomatis setelah (menit, 0 = tidak)</label><input type="number" id="g_idleOffMinutes" value="' + (s.idleOffMinutes || 0) + '"></div>' +
 
+      '</div><div class="card" style="grid-column:1/-1"><h3>' + ic('palette', 16) + ' Tema</h3>' +
+      '<div class="spread" style="margin-bottom:10px"><b>Tema layar TV</b><span class="muted" style="font-size:12px">Berlaku untuk layar kunci, timer & notifikasi di semua TV</span></div><div class="theme-grid" id="tvtg"></div>' +
+      '<div class="row" style="margin-top:16px"><div class="field" style="flex:1;max-width:360px"><label class="f">Tema bawaan panel (untuk pengguna yang belum memilih)</label><select id="g_panelTheme">' + ECTheme.list.map((t) => '<option value="' + t.id + '" ' + ((s.panelTheme || 'elclassico') === t.id ? 'selected' : '') + '>' + esc(t.name) + '</option>').join('') + '</select></div>' +
+      '<div class="dim" style="font-size:12px;flex:1">Setiap pengguna bisa memilih tema panelnya sendiri lewat ikon palet 🎨 di kanan atas.</div></div>' +
       '</div><div class="card" style="grid-column:1/-1"><h3>Timer di Layar TV saat Bermain</h3><div class="grid" style="grid-template-columns:1.1fr 1fr;gap:20px"><div>' +
       '<div class="tvprev" id="tvprev"><div class="gm">TAMPILAN GAME</div><div class="pp" id="pp"><i></i><span>TV 01</span><b>00:42:15</b></div></div>' +
       '<div class="dim" style="font-size:12px;margin-top:8px">Pratinjau. Timer tidak bisa disentuh/dipilih sehingga tidak mengganggu stik PS.</div></div><div>' +
@@ -890,6 +923,13 @@
       sw('g_bigCountdown', !!s.bigCountdown, 'Hitung mundur besar di tengah layar', 'Muncul saat sisa waktu ≤ waktu notifikasi; matikan jika cukup timer pojok saja') +
       '</div></div>' +
       '</div></div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn gold lg" id="sv">' + ic('check', 16) + 'Simpan Pengaturan</button></div>';
+    // Tema TV
+    let tvTheme = s.tvTheme || 'elclassico';
+    const drawTv = () => {
+      $('#tvtg').innerHTML = ECTheme.list.map((t) => '<div class="tcard ' + (t.id === tvTheme ? 'on' : '') + '" data-t="' + t.id + '">' + ECTheme.swatch(Object.assign({}, t, t.mode === 'light' ? { bg: t.tvBg, s1: '#ffffff14', mode: 'dark' } : {})) + '<b>' + esc(t.name) + '</b><small>' + esc(t.desc) + '</small></div>').join('');
+      $$('#tvtg .tcard').forEach((c) => (c.onclick = () => { tvTheme = c.dataset.t; drawTv(); }));
+    };
+    drawTv();
     // Pratinjau timer
     const prev = () => {
       const pp = $('#pp'); if (!pp) return;
@@ -907,6 +947,7 @@
       const v = {};
       ['name', 'tagline', 'address', 'phone', 'receiptFooter', 'warningSeconds', 'rounding', 'openBillingBlock', 'idleOffMinutes'].forEach((k) => (v[k] = $('#g_' + k).value));
       v.pillPosition = $('#g_pillPosition').value; v.pillSize = $('#g_pillSize').value;
+      v.tvTheme = tvTheme; v.panelTheme = $('#g_panelTheme').value;
       v.pillMode = $('#g_pillMode').value; v.pillPeekEvery = $('#g_pillPeekEvery').value; v.pillOpacity = Number($('#g_pillOpacity').value) / 100;
       ['lockOnPause', 'autoHdmi', 'showTimerPill', 'autoOffAfterCheckout', 'bigCountdown'].forEach((k) => (v[k] = $('#g_' + k).checked));
       try { await act('/api/config/settings', { value: v }, 'Pengaturan disimpan'); } catch (e) {}

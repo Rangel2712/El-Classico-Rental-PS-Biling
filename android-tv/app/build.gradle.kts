@@ -11,8 +11,8 @@ android {
         applicationId = "com.elclassico.billing"
         minSdk = 21
         targetSdk = 33
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "1.5.0"
     }
     // Kunci tanda tangan tetap (disimpan di repo) agar APK versi baru bisa langsung
     // dipasang menimpa versi lama tanpa uninstall.
@@ -41,7 +41,7 @@ android {
 
 // Salin tampilan TV terbaru dari folder server agar APK & browser selalu sama
 val copyTvAssets by tasks.registering(Copy::class) {
-    from("../../server/public") { include("tv.html", "tv.css", "tv.js") }
+    from("../../server/public") { include("tv.html", "tv.css", "tv.js", "themes.js") }
     into("src/main/assets/tv")
 }
 tasks.named("preBuild") { dependsOn(copyTvAssets) }

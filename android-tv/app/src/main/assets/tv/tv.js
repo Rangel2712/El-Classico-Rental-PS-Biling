@@ -18,6 +18,7 @@
   const short = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); const h = Math.floor(s / 3600); return (h ? h + ':' : '') + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60); };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  let appliedTheme = null;
   let st = null, recvAt = 0, connected = false, lastStatus = null, beeped = {};
   document.body.classList.add(mode === 'overlay' ? 'overlaymode' : mode === 'lock' ? 'lockmode' : 'web');
 
@@ -105,6 +106,9 @@
     const showPlay = mode === 'web' && stt === 'playing';
     $('lock').classList.toggle('hidden', !showLock);
     $('play').classList.toggle('hidden', !showPlay);
+    if (st && st.config && window.ECTheme && st.config.theme !== appliedTheme) {
+      appliedTheme = st.config.theme; ECTheme.apply(appliedTheme, { tv: true });
+    }
     if (st && st.config) {
       const pill = $('pill');
       pill.className = pill.className.replace(/\b(pos|size)-\w+/g, '').trim() + ' pos-' + (st.config.pillPosition || 'tr') + ' size-' + (st.config.pillSize || 'm');

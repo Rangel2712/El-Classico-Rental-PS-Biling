@@ -13,7 +13,7 @@ const dgram = require('dgram');
 const url = require('url');
 const WS = require('./lib/ws');
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const DISCOVERY_PORT = 41234;
 
 // ---------- Default data ----------
@@ -41,6 +41,8 @@ function defaultDB() {
       pillOpacity: 0.55,           // transparansi timer (0.2–1) agar tidak mengganggu permainan
       pillMode: 'always',          // always | peek (muncul sebentar tiap N menit) | last5 (hanya 5 menit terakhir)
       pillPeekEvery: 10,           // menit, untuk mode peek
+      tvTheme: 'elclassico',       // tema layar TV
+      panelTheme: 'elclassico',    // tema bawaan panel untuk pengguna yang belum memilih
     },
     types: [
       { id: 'ps3', name: 'PlayStation 3', ratePerHour: 5000, ratePerHalfHour: 3000, color: '#3b82f6' },
@@ -208,7 +210,7 @@ function start(opts) {
   }
   function publicUser(x) {
     return { id: x.id, name: x.name, username: x.username, role: x.role, roleLabel: ROLE_LABEL[x.role] || x.role,
-      perms: effectivePerms(x), active: x.active !== false, createdAt: x.createdAt, lastLogin: x.lastLogin || null, createdBy: x.createdBy || null };
+      perms: effectivePerms(x), active: x.active !== false, theme: x.theme || '', createdAt: x.createdAt, lastLogin: x.lastLogin || null, createdBy: x.createdBy || null };
   }
   function userFromToken(t) {
     if (!t) return null;
@@ -315,6 +317,7 @@ function start(opts) {
         autoHdmi: db.settings.autoHdmi, showTimerPill: db.settings.showTimerPill,
         pillPosition: db.settings.pillPosition, pillSize: db.settings.pillSize, bigCountdown: db.settings.bigCountdown,
         pillOpacity: db.settings.pillOpacity, pillMode: db.settings.pillMode, pillPeekEvery: db.settings.pillPeekEvery,
+        theme: db.settings.tvTheme || 'elclassico',
       },
       unit: unit ? { id: unit.id, name: unit.name, type: unit.type, typeName: typeById(unit.type).name } : { id: unitId, name: unitId, unknown: true },
       session: sv ? {
@@ -636,6 +639,7 @@ function start(opts) {
       if (['s', 'm', 'l'].indexOf(value.pillSize) >= 0) s.pillSize = value.pillSize;
       if (value.pillOpacity != null) s.pillOpacity = clamp(Number(value.pillOpacity) || 0.55, 0.2, 1);
       if (['always', 'peek', 'last5'].indexOf(value.pillMode) >= 0) s.pillMode = value.pillMode;
+      ['tvTheme', 'panelTheme'].forEach((k) => { if (typeof value[k] === 'string' && /^[a-z0-9-]{2,30}$/.test(value[k])) s[k] = value[k]; });
       if (value.pillPeekEvery != null) s.pillPeekEvery = clamp(Math.round(Number(value.pillPeekEvery) || 10), 1, 60);
       s.warningSeconds = clamp(s.warningSeconds || 60, 10, 600);
       db.settings = s;
@@ -849,7 +853,7 @@ function start(opts) {
     try {
       if (p === '/api/ping') return sendJSON(res, 200, { app: 'elclassico', name: db.settings.name, version: VERSION });
       if (p === '/api/users/public') {
-        return sendJSON(res, 200, { name: db.settings.name, users: db.users.filter((x) => x.active !== false).map((x) => ({ id: x.id, name: x.name, role: x.role, roleLabel: ROLE_LABEL[x.role] })) });
+        return sendJSON(res, 200, { name: db.settings.name, panelTheme: db.settings.panelTheme || 'elclassico', users: db.users.filter((x) => x.active !== false).map((x) => ({ id: x.id, name: x.name, role: x.role, roleLabel: ROLE_LABEL[x.role], theme: x.theme || '' })) });
       }
       if (p === '/api/login' && req.method === 'POST') {
         const b = await readBody(req);
@@ -907,6 +911,10 @@ function start(opts) {
         if (p === '/api/logout') { delete db.tokens[token]; audit(user, 'Logout', ''); save(); return sendJSON(res, 200, { ok: true }); }
         if (p === '/api/me/update') {
           if (b.name) user.name = String(b.name).trim().slice(0, 40) || user.name;
+        if (typeof b.theme === 'string' && /^[a-z0-9-]{0,30}$/.test(b.theme)) {
+          user.theme = b.theme;
+          if (!b.name && !b.newPin) { save(); return sendJSON(res, 200, { user: publicUser(user) }); }
+        }
           if (b.newPin) {
             if (hashPin(b.oldPin, user.salt) !== user.pinHash) throw new Error('PIN lama salah');
             if (!validPin(b.newPin)) throw new Error('PIN harus 4–8 digit angka');
